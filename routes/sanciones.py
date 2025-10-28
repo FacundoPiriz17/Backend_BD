@@ -52,6 +52,7 @@ def aniadirSancion():
     fecha_inicio = data.get("fecha_inicio")
     fecha_fin = data.get("fecha_fin")
 
+    #Verifica que el usuario no una sanción previa
     cursor.execute("SELECT * FROM sancion_participante WHERE ci_participante = %s AND fecha_fin > CURDATE();", (ci_participante,) )
     resultado = cursor.fetchone()
     if resultado:

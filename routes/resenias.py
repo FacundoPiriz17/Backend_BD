@@ -53,7 +53,8 @@ def aniadirResenia():
     fecha_publicacion = data.get("fecha_publicacion")
     puntaje_general = data.get("puntaje_general")
     descripcion = data.get("descripcion")
-
+    
+    #Verifica que el usuario no haya hecho una reseña previa a esa sala
     cursor.execute("SELECT * FROM resena WHERE ci_participante = %s AND id_reserva = %s", (ci_participante, id_reserva))
     resultado = cursor.fetchone()
     if resultado:
