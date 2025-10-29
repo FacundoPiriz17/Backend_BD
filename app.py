@@ -4,6 +4,7 @@ from flask import Flask
 from routes.login import login_bp
 from routes.users import users_bp
 from routes.edificios import edificio_bp
+from routes.sanciones import sanciones_bp
 app = Flask(__name__)
 CORS(app)
 
@@ -12,6 +13,8 @@ app.register_blueprint(login_bp)
 app.register_blueprint(users_bp)
 
 app.register_blueprint(edificio_bp)
+
+app.register_blueprint(sanciones_bp)
 
 @app.route('/')
 def init():
