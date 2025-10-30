@@ -182,3 +182,4 @@ def salas_menor_ocupacion():
     ORDER BY total_reservas ASC
     LIMIT 5;
     '''
+    return run_query(query)
