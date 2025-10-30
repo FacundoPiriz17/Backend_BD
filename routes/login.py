@@ -160,7 +160,7 @@ def login_usuario():
         return jsonify({'error': 'Faltan datos requeridos'}), 400
 
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
             SELECT u.ci, u.nombre, u.apellido, u.email, u.rol, l.contrasena 
