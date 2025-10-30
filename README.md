@@ -12,3 +12,7 @@ Bitacora:
 
 26/10: Investigamos sobre la libreria "PyJWT", para poder crear un token que monitoree el tiempo que dura la sesión, de forma que la sesión se cierre pasadp un tiempo determinado, como una medida extra de seguridad.
 La funcion del token ya fue implementada, debemeos testearla todavia.
+
+28/10: Terminado el login en Frontend y varios endpoints de la API, relacionados principalmente con las reseñas y las sanciones.
+
+29/10: Varios endpoints más de la API y terminamos la dockerización de la API. 
