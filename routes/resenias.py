@@ -5,7 +5,7 @@ from db import get_connection
 resenias_bp = Blueprint('resenas', __name__, url_prefix='/resenas')
 
 #Todas las reseñas
-@resenias_bp.route('/resenas/all', methods=['GET'])
+@resenias_bp.route('/all', methods=['GET'])
 def resenias():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -22,7 +22,7 @@ def resenias():
         conection.close()
 
 #Obtener una reseña específica
-@resenias_bp.route('/resenas/<int:id>', methods=['GET'])
+@resenias_bp.route('/resena/<int:id>', methods=['GET'])
 def reseniasEspecifica(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -43,7 +43,7 @@ def reseniasEspecifica(id):
         conection.close()
 
 #Añadir una reseña
-@resenias_bp.route('/resenas', methods=['POST'])
+@resenias_bp.route('/registrar', methods=['POST'])
 def aniadirResenia():
     conection = get_connection()
     cursor = conection.cursor()
@@ -76,7 +76,7 @@ def aniadirResenia():
 
 
 #Modificar una reseña 
-@resenias_bp.route('/resenas/<int:id>', methods=['PUT'])
+@resenias_bp.route('/modificar/<int:id>', methods=['PUT'])
 def modificarResenia(id):
     conection = get_connection()
     cursor = conection.cursor()
@@ -101,7 +101,7 @@ def modificarResenia(id):
         conection.close()
 
 #eliminar una reseña
-@resenias_bp.route('/resenas/<int:id>', methods=['DELETE'])
+@resenias_bp.route('/eliminar/<int:id>', methods=['DELETE'])
 def eliminarResenia(id):
     conection = get_connection()
     cursor = conection.cursor()

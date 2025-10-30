@@ -17,8 +17,8 @@ def run_query(query):
     finally:
         cursor.close()
         connection.close()
-#Salas mas reservadas:
 
+#Salas mas reservadas:
 @stats_bp.route('/salas_mas_reservadas', methods=['GET'])
 def salas_mas_reservadas():
     query = ''' 

@@ -20,7 +20,7 @@ def obtener_todos_los_usuarios():
         return jsonify({'error': str(e)}), 500
 
 
-@edificio_bp.route('/todos/<string:nombre>', methods=['GET'])
+@edificio_bp.route('/edificio/<string:nombre>', methods=['GET'])
 def obtener_plan_por_id(nombre):
     conection = get_connection()
     cursor = conection.cursor()

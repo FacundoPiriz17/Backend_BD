@@ -4,7 +4,7 @@ from db import get_connection
 sanciones_bp = Blueprint('sanciones', __name__, url_prefix='/sanciones')
 
 #Todas las sanciones
-@sanciones_bp.route('/sanciones/all', methods=['GET'])
+@sanciones_bp.route('/all', methods=['GET'])
 def sanciones():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -21,7 +21,7 @@ def sanciones():
         conection.close()
         
 #Obtener una sanción específica
-@sanciones_bp.route('/sanciones/<int:id>', methods=['GET'])
+@sanciones_bp.route('/sancion/<int:id>', methods=['GET'])
 def sancionEspecifica(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -42,7 +42,7 @@ def sancionEspecifica(id):
         conection.close()
 
 #Añadir una sancion
-@sanciones_bp.route('/sanciones', methods=['POST'])
+@sanciones_bp.route('/registrar', methods=['POST'])
 def aniadirSancion():
     conection = get_connection()
     cursor = conection.cursor()
@@ -73,7 +73,7 @@ def aniadirSancion():
             conection.close()
 
 #Modificar una sanción 
-@sanciones_bp.route('/sanciones/<int:id>', methods=['PUT'])
+@sanciones_bp.route('/modificar/<int:id>', methods=['PUT'])
 def modificarSancion(id):
     conection = get_connection()
     cursor = conection.cursor()
@@ -97,7 +97,7 @@ def modificarSancion(id):
         conection.close()
 
 #eliminar una sanción
-@sanciones_bp.route('/sanciones/<int:id>', methods=['DELETE'])
+@sanciones_bp.route('/eliminar/<int:id>', methods=['DELETE'])
 def eliminarSancion(id):
     conection = get_connection()
     cursor = conection.cursor()

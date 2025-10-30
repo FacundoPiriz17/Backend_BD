@@ -4,7 +4,7 @@ from db import get_connection
 turno_bp = Blueprint('/turnos', __name__, url_prefix='/turnos')
 
 #Todos los turnos
-@turno_bp.route('/turnos/all', methods=['GET'])
+@turno_bp.route('/all', methods=['GET'])
 def turnos():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -21,7 +21,7 @@ def turnos():
         conection.close()
 
 #Obtener un turno específica
-@turno_bp.route('/turnos/<int:id>', methods=['GET'])
+@turno_bp.route('/turno/<int:id>', methods=['GET'])
 def turnoEspecifico(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
