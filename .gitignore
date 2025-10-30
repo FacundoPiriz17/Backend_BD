@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# Logs y datos locales
+*.log
+*.sqlite3
+
+# JetBrains / PyCharm
+.idea/
+workspace.xml
+*.iml
+!.idea/inspectionProfiles
+!.idea/codeStyles
+!.idea/runConfigurations
