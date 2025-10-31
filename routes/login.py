@@ -4,6 +4,7 @@ import datetime
 from db import get_connection
 from hash_function import hasheo, verificar_contrasena
 from validation import requiere_rol, verificar_token
+from validators import validar_ci, validar_email_ucu, validar_insercion_usuario
 
 login_bp = Blueprint('login', __name__, url_prefix='/login')
 
@@ -23,6 +24,18 @@ def registrar_usuario():
 
     if not all([ci, nombre, apellido, email, rol, contrasena]) or not all(str(x).strip() for x in [ci, nombre, apellido, email, rol, contrasena]):
         return jsonify({'error': 'Datos insuficientes'}), 400
+
+    if not validar_ci(ci):
+        return jsonify({'error': 'Cédula inválida'}), 400
+
+    if not validar_email_ucu(email):
+        return jsonify({'error': 'Email no válido. Debe ser @correo.ucu.edu.uy o @ucu.edu.uy'}), 400
+
+    ok, msg = validar_insercion_usuario(rol)
+    # Si ok == False y rol administrativo, la función devolvió False y un mensaje de que es rol administrativo.
+    # En registro, eso no es un error: simplemente indica que no se debe insertar plan académico. No bloqueamos el registro.
+    # Dejamos la lógica tal como: si es admin/funcionario no se requiere plan académico.
+    # Por ahora solo usamos el mensaje para info en caso de querer extender comportamiento.
 
     conection = get_connection()
     cursor = conection.cursor()
@@ -95,6 +108,9 @@ def actualizar_usuario(ci):
 
     if not all([nombre, apellido, email, rol]) or not all(str(x).strip() for x in [nombre, apellido, email, rol]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
+
+    if not validar_email_ucu(email):
+        return jsonify({'error': 'Email no válido. Debe ser @correo.ucu.edu.uy o @ucu.edu.uy'}), 400
 
     conn = get_connection()
     cursor = conn.cursor()

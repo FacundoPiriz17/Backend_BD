@@ -1,10 +1,12 @@
 from flask import Blueprint, jsonify, request
 from db import get_connection
+from validation import verificar_token
 
 turno_bp = Blueprint('/turnos', __name__, url_prefix='/turnos')
 
 #Todos los turnos
 @turno_bp.route('/all', methods=['GET'])
+@verificar_token
 def turnos():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -22,6 +24,7 @@ def turnos():
 
 #Obtener un turno específica
 @turno_bp.route('/turno/<int:id>', methods=['GET'])
+@verificar_token
 def turnoEspecifico(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
