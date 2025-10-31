@@ -1,11 +1,13 @@
-
 from flask import Blueprint, jsonify, request
 from db import get_connection
-
+from validators import validar_resena_unica, validar_ci
+from validation import verificar_token, requiere_rol
 resenias_bp = Blueprint('resenas', __name__, url_prefix='/resenas')
 
 #Todas las reseñas
 @resenias_bp.route('/all', methods=['GET'])
+@verificar_token
+@requiere_rol('Funcionario','Administrador')
 def resenias():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -23,6 +25,8 @@ def resenias():
 
 #Obtener una reseña específica
 @resenias_bp.route('/resena/<int:id>', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def reseniasEspecifica(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -44,51 +48,80 @@ def reseniasEspecifica(id):
 
 #Añadir una reseña
 @resenias_bp.route('/registrar', methods=['POST'])
+@verificar_token
+@requiere_rol('Participante')
 def aniadirResenia():
     conection = get_connection()
     cursor = conection.cursor()
     data = request.get_json()
     ci_participante = data.get("ci_participante")
     id_reserva = data.get("id_reserva")
-    fecha_publicacion = data.get("fecha_publicacion")
     puntaje_general = data.get("puntaje_general")
     descripcion = data.get("descripcion")
-    
-    #Verifica que el usuario no haya hecho una reseña previa a esa sala
-    cursor.execute("SELECT * FROM resena WHERE ci_participante = %s AND id_reserva = %s", (ci_participante, id_reserva))
-    resultado = cursor.fetchone()
-    if resultado:
-        return jsonify({ "error": "El participante ya ha hecho una reseña a esta sala"})
 
-    else:
-        try:
-            cursor.execute("INSERT INTO resena (id_reserva, ci_participante, fecha_publicacion, puntaje_general, descripcion) VALUES (%s,%s,%s,%s,%s)", (id_reserva, ci_participante, fecha_publicacion, puntaje_general, descripcion))
-            conection.commit()
-            return jsonify({'mensaje': 'Reseña registrada correctamente'}), 201
+    if not all([ci_participante, id_reserva, puntaje_general]):
+        return jsonify({'error': 'Faltan datos requeridos'}), 400
 
-        except Exception as e:
-            conection.rollback()
-            return jsonify({'error': str(e)}), 500
+    if not validar_ci(ci_participante):
+        return jsonify({'error': 'Cédula inválida'}), 400
 
-        finally:
-            cursor.close()
-            conection.close()
+    try:
+        punt = int(puntaje_general)
+    except Exception:
+        return jsonify({'error': 'Puntaje debe ser un número entre 1 y 5'}), 400
+
+    if not (1 <= punt <= 5):
+        return jsonify({'error': 'Puntaje debe ser entre 1 y 5'}), 400
+
+    ok, msg = validar_resena_unica(id_reserva, ci_participante)
+    if not ok:
+        return jsonify({'error': msg}), 400
+
+    try:
+        cursor.execute(
+            "INSERT INTO resena (id_reserva, ci_participante, puntaje_general, descripcion) VALUES (%s,%s,%s,%s,%s)",
+            (id_reserva, ci_participante, punt, descripcion))
+        cursor.execute("UPDATE reservaParticipante SET resenado = true WHERE id_reserva = %s AND ci_participante = %s",
+                       (id_reserva, ci_participante))
+        conection.commit()
+        return jsonify({'mensaje': 'Reseña registrada correctamente'}), 201
+    except Exception as e:
+        conection.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conection.close()
 
 
 #Modificar una reseña 
 @resenias_bp.route('/modificar/<int:id>', methods=['PUT'])
+@verificar_token
+@requiere_rol('Participante')
 def modificarResenia(id):
     conection = get_connection()
     cursor = conection.cursor()
     data = request.get_json()
     ci_participante = data.get("ci_participante")
     id_reserva = data.get("id_reserva")
-    fecha_publicacion = data.get("fecha_publicacion")
     puntaje_general = data.get("puntaje_general")
     descripcion = data.get("descripcion")
-    
+
+    if not all([ci_participante, id_reserva, puntaje_general]):
+        return jsonify({'error': 'Faltan datos requeridos'}), 400
+
+    if not validar_ci(ci_participante):
+        return jsonify({'error': 'Cédula inválida'}), 400
+
     try:
-        cursor.execute("UPDATE resena SET ci_participante = %s, id_reserva = %s, fecha_publicacion = %s, puntaje_general = %s, descripcion = %s WHERE id_resena = %s", (ci_participante, id_reserva, fecha_publicacion, puntaje_general, descripcion, id))
+        punt = int(puntaje_general)
+    except Exception:
+        return jsonify({'error': 'Puntaje debe ser un número entre 1 y 5'}), 400
+
+    if not (1 <= punt <= 5):
+        return jsonify({'error': 'Puntaje debe ser entre 1 y 5'}), 400
+
+    try:
+        cursor.execute("UPDATE resena SET ci_participante = %s, id_reserva = %s, puntaje_general = %s, descripcion = %s WHERE id_resena = %s", (ci_participante, id_reserva, puntaje_general, descripcion, id))
         conection.commit()
         return jsonify({'mensaje': 'Reseña modificada correctamente'}), 200
 
@@ -102,6 +135,8 @@ def modificarResenia(id):
 
 #eliminar una reseña
 @resenias_bp.route('/eliminar/<int:id>', methods=['DELETE'])
+@verificar_token
+@requiere_rol('Administrador','Funcionario')
 def eliminarResenia(id):
     conection = get_connection()
     cursor = conection.cursor()

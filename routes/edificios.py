@@ -1,12 +1,14 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from validation import verificar_token, requiere_rol
 
 edificio_bp = Blueprint('edificios', __name__, url_prefix='/edificios')
 
 @edificio_bp.route('/todos', methods=['GET'])
+@verificar_token
 def obtener_todos_los_usuarios():
     conection = get_connection()
-    cursor = conection.cursor()
+    cursor = conection.cursor(dictionary=True)
 
     try:
         cursor.execute("SELECT * FROM edificio")
@@ -21,9 +23,10 @@ def obtener_todos_los_usuarios():
 
 
 @edificio_bp.route('/edificio/<string:nombre>', methods=['GET'])
+@verificar_token
 def obtener_plan_por_id(nombre):
     conection = get_connection()
-    cursor = conection.cursor()
+    cursor = conection.cursor(dictionary=True)
 
     try:
         cursor.execute("SELECT * FROM edificio WHERE nombre_edificio = %s", (nombre,))
@@ -40,10 +43,11 @@ def obtener_plan_por_id(nombre):
         cursor.close()
         conection.close()
 
-@edificio_bp.route('/edificio/<string:campus>', methods=['GET'])
+@edificio_bp.route('/campus/<string:campus>', methods=['GET'])
+@verificar_token
 def obtener_edificio_por_campus(campus):
     conection = get_connection()
-    cursor = conection.cursor()
+    cursor = conection.cursor(dictionary=True)
 
     try:
         cursor.execute("SELECT * FROM edificio WHERE campus = %s", (campus,))

@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from validation import verificar_token, requiere_rol
 
 stats_bp = Blueprint('stats', __name__, url_prefix='/stats')
 
@@ -20,6 +21,8 @@ def run_query(query):
 
 #Salas mas reservadas:
 @stats_bp.route('/salas_mas_reservadas', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def salas_mas_reservadas():
     query = ''' 
     SELECT nombre_sala, edificio, COUNT(*) AS total_reservas
@@ -32,6 +35,8 @@ def salas_mas_reservadas():
 
 # Turnos mas demandados:
 @stats_bp.route('/turnos_mas_demanados', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def turnos_mas_demandados():
     query = ''' 
     SELECT t.id_turno, t.hora_inicio, t.hora_fin, COUNT(r.id_reserva) AS total_reservas
@@ -44,6 +49,8 @@ def turnos_mas_demandados():
 
 # Promedio de participantes por sala:
 @stats_bp.route('/promedio_participantes_sala', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def promedio_participantes_sala():
     query = ''' 
     SELECT r.nombre_sala, r.edificio,
@@ -61,6 +68,8 @@ def promedio_participantes_sala():
 
 # Cantidad de reservas por carrera y facultad
 @stats_bp.route('/cant_reservas_carr_facu', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def cant_reservas_carr_facu():
     query = '''
     SELECT pa.nombre_plan, pa.tipo, f.nombre_facultad, 
@@ -75,6 +84,8 @@ def cant_reservas_carr_facu():
 
 # Porcentaje de ocupacion de salas por edificio
 @stats_bp.route('/porcentaje_ocupacion_salas_edificio', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def porcentaje_ocupacion_salas_edificio():
     query = '''
     SELECT edificio,
@@ -94,6 +105,8 @@ def porcentaje_ocupacion_salas_edificio():
 
 # Cantidad de reservas y asistencias de profesores y alumnos (grado y posgrado)
 @stats_bp.route('/res_asist_profesores_alumnos', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def res_asist_profesores_alumnos():
     query = '''
     SELECT ppa.rol, pa.tipo,
@@ -109,6 +122,8 @@ def res_asist_profesores_alumnos():
 
 #Cantidad de sanciones para profesores y alumnos (grado y posgrado)
 @stats_bp.route('/cant_sanciones_profesores_alumnos', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def cant_sanciones_profesores_alumnos():
     query = '''
     SELECT ppa.rol, pa.tipo, COUNT(*) AS total_sanciones
@@ -122,6 +137,8 @@ def cant_sanciones_profesores_alumnos():
 
 # Porcentaje de reservas efectivamente utilizadas vs. canceladas/no asistidas
 @stats_bp.route('/porcentaje_reservas_utilizadas', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def porcentaje_reservas_utilizadas():
     query = '''
     SELECT
@@ -138,6 +155,8 @@ def porcentaje_reservas_utilizadas():
 
 # Los 10 usuarios con más reservas realizadas
 @stats_bp.route('/top_10_usuarios_mas_reservas', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def top_10_usuarios_mas_reservas():
     query = '''
     SELECT u.ci, u.nombre, u.apellido, COUNT(DISTINCT rp.id_reserva) AS total_reservas
@@ -152,6 +171,8 @@ def top_10_usuarios_mas_reservas():
 
 # Reservas por dia de la semana:
 @stats_bp.route('/reservas_por_dayweek', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def reservas_por_dayweek():
     query = ''' 
     SELECT 
@@ -174,6 +195,8 @@ def reservas_por_dayweek():
 
 #Salas con menor ocupacion:
 @stats_bp.route('/salas_menor_ocupacion', methods=['GET'])
+@verificar_token
+@requiere_rol('Administrador', 'Funcionario')
 def salas_menor_ocupacion():
     query = '''
     SELECT nombre_sala, edificio, COUNT(*) AS total_reservas
