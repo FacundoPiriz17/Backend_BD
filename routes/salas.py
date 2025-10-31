@@ -1,51 +1,10 @@
 from flask import Blueprint, jsonify, request
 from db import get_connection
+from validation import verificar_token, requiere_rol
 
 salas_bp = Blueprint('salas', __name__, url_prefix='/salas')
 
 # Mostrar todas las salas
-@salas_bp.route('/mostrar_salas', methods=['GET'])
-def mostrar_salas():
-    conection = get_connection()
-    cursor = conection.cursor(dictionary=True)
-    try:
-        cursor.execute("'SELECT *  FROM salaDeEstudio"'')
-        resultados = cursor.fetchall()
-        return jsonify(resultados)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-    finally:
-        cursor.close()
-        conection.close()
-
-# Mostrar las salas disponibles
-@salas_bp.route('/salas_disponibles', methods=['GET'])
-def salas_disponibles():
-    conection = get_connection()
-    cursor = conection.cursor(dictionary=True)
-    try:
-        cursor.execute('''SELECT * 
-                        FROM salaDeEstudio
-                        WHERE disponible = TRUE''')
-        resultados = cursor.fetchall()
-        return jsonify(resultados)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-    finally:
-        cursor.close()
-        conection.close()
-
-# Agregar una nueva sala
-@salas_bp.route('/addSala', methods=['POST'])
-def addSala():
-from validation import verificar_token, requiere_rol
-
-salas_bp = Blueprint('rooms', __name__, url_prefix='/rooms')
-
 @salas_bp.route('/all', methods=['GET'])
 @verificar_token
 def obtener_todas_las_salas():
@@ -53,6 +12,22 @@ def obtener_todas_las_salas():
     cursor = connection.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM salasDeEstudio")
+        resultados = cursor.fetchall()
+        return jsonify(resultados)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+# Mostrar las salas disponibles
+@salas_bp.route('/disponibles', methods=['GET'])
+@verificar_token
+def obtener_salas_disponibles():
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM salasDeEstudio WHERE disponible = TRUE")
         resultados = cursor.fetchall()
         return jsonify(resultados)
     except Exception as e:
@@ -74,15 +49,14 @@ def obtener_sala(nombre_sala, edificio):
         sala = cursor.fetchone()
         if sala:
             return jsonify(sala)
-        else:
-            return jsonify({'mensaje': 'Sala no encontrada'}), 404
+        return jsonify({'mensaje': 'Sala no encontrada'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
         cursor.close()
         connection.close()
 
-@salas_bp.route('/', methods=['POST'])
+@salas_bp.route('/registrar', methods=['POST'])
 @verificar_token
 @requiere_rol('Administrador')
 def crear_sala():
@@ -98,29 +72,43 @@ def crear_sala():
 
     try:
         capacidad_int = int(capacidad)
+        if capacidad_int <= 0:
+            raise ValueError
     except Exception:
-        return jsonify({'error': 'Capacidad debe ser un número entero positivo'}), 400
+        return jsonify({'error': 'Capacidad debe ser un número entero positivo mayor a 0'}), 400
 
     if capacidad_int <= 0:
         return jsonify({'error': 'Capacidad debe ser mayor a 0'}), 400
 
     try:
         punt = int(puntaje)
+        if not (1 <= punt <= 5):
+            raise ValueError
     except Exception:
         return jsonify({'error': 'Puntaje debe ser un número entre 1 y 5'}), 400
-
-    if not (1 <= punt <= 5):
-        return jsonify({'error': 'Puntaje debe ser entre 1 y 5'}), 400
 
     connection = get_connection()
     cursor = connection.cursor(dictionary=True)
     try:
         cursor.execute("""
-            INSERT INTO salasDeEstudio (nombre_sala, edificio, capacidad, tipo_sala, puntaje)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (nombre_sala, edificio, capacidad, tipo_sala, puntaje))
+                       SELECT COUNT(*) AS existe
+                       FROM salasDeEstudio
+                       WHERE nombre_sala = %s
+                         AND edificio = %s
+                       """, (nombre_sala, edificio))
+        existe = cursor.fetchone()['existe']
+
+        if existe > 0:
+            return jsonify({'error': 'La sala ya existe en este edificio'}), 400
+
+        cursor.execute("""
+                       INSERT INTO salasDeEstudio (nombre_sala, edificio, capacidad, tipo_sala, puntaje)
+                       VALUES (%s, %s, %s, %s, %s)
+                       """, (nombre_sala, edificio, capacidad_int, tipo_sala, punt))
         connection.commit()
+
         return jsonify({'mensaje': 'Sala creada correctamente'}), 201
+
     except Exception as e:
         connection.rollback()
         return jsonify({'error': str(e)}), 500
