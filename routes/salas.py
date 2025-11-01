@@ -197,3 +197,37 @@ def eliminar_sala(nombre_sala, edificio):
     finally:
         cursor.close()
         connection.close()
+
+@salas_bp.route('/disponibilidad', methods=['PATCH'])
+@verificar_token
+def cambiar_disponibilidad_sala():
+    data = request.get_json()
+    nombre_sala = data.get('nombre_sala')
+    edificio = data.get('edificio')
+    disponible = data.get('disponible')
+
+    if not all([nombre_sala, edificio, disponible is not None]):
+        return jsonify({'error': 'Faltan datos requeridos'}), 400
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("""
+            UPDATE salasDeEstudio
+            SET disponible = %s
+            WHERE nombre_sala = %s AND edificio = %s
+        """, (disponible, nombre_sala, edificio))
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'mensaje': 'Sala no encontrada'}), 404
+
+        return jsonify({'mensaje': 'Disponibilidad de la sala actualizada correctamente'})
+    except Exception as e:
+        connection.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+#Checkear esta funcion mañana
