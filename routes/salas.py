@@ -230,4 +230,3 @@ def cambiar_disponibilidad_sala():
         cursor.close()
         connection.close()
 
-#Checkear esta funcion mañana
