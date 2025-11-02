@@ -78,16 +78,46 @@ def aniadirResenia():
         return jsonify({'error': msg}), 400
 
     try:
-        cursor.execute(
-            "INSERT INTO resena (id_reserva, ci_participante, puntaje_general, descripcion) VALUES (%s,%s,%s,%s,%s)",
-            (id_reserva, ci_participante, punt, descripcion))
-        cursor.execute("UPDATE reservaParticipante SET resenado = true WHERE id_reserva = %s AND ci_participante = %s",
-                       (id_reserva, ci_participante))
+        cursor.execute("""
+            INSERT INTO resena (id_reserva, ci_participante, puntaje_general, descripcion)
+            VALUES (%s, %s, %s, %s)
+        """, (id_reserva, ci_participante, punt, descripcion))
+
+        cursor.execute("""
+            UPDATE reservaParticipante
+            SET resenado = TRUE
+            WHERE id_reserva = %s AND ci_participante = %s
+        """, (id_reserva, ci_participante))
+
+        cursor.execute("""
+            SELECT nombre_sala, edificio FROM reserva WHERE id_reserva = %s
+        """, (id_reserva,))
+        sala = cursor.fetchone()
+
+        if sala:
+            nombre_sala, edificio = sala
+
+            cursor.execute("""
+                SELECT AVG(r.puntaje_general)
+                FROM resena r
+                JOIN reserva re ON r.id_reserva = re.id_reserva
+                WHERE re.nombre_sala = %s AND re.edificio = %s
+            """, (nombre_sala, edificio))
+            promedio = cursor.fetchone()[0]
+
+            cursor.execute("""
+                UPDATE salasDeEstudio
+                SET puntaje = ROUND(%s,2)
+                WHERE nombre_sala = %s AND edificio = %s
+            """, (promedio, nombre_sala, edificio))
+
         conection.commit()
-        return jsonify({'mensaje': 'Reseña registrada correctamente'}), 201
+        return jsonify({'mensaje': 'Reseña registrada y puntaje actualizado correctamente'}), 201
+
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
+
     finally:
         cursor.close()
         conection.close()
