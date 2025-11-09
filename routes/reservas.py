@@ -161,6 +161,54 @@ def invitarParticipante():
     finally:
         cursor.close()
         conection.close()
+        
+#Confirmar/cancela un invitado
+@reservas_bp.route('/confirmacion/<int:id>', methods=['PATCH'])
+@verificar_token
+@requiere_rol('Participante')
+def confirmarInvitado(id):
+    conection = get_connection()
+    cursor = conection.cursor()
+
+
+    try:
+        cursor.execute("UPDATE reservaParticipante SET confirmacion = NOT confirmacion WHERE id_reserva = %s", (id))
+        conection.commit()
+        return jsonify({'mensaje': 'Respuesta confirmada correctamente'}), 201
+
+    except Exception as e:
+        conection.rollback()
+        return jsonify({'error': str(e)}), 500
+
+    finally:
+        cursor.close()
+        conection.close()
+
+
+#Sala reseñada 
+@reservas_bp.route('/resena/<int:id>', methods=['PATCH'])
+@verificar_token
+@requiere_rol('Participante')
+def actualizarResenia(id):
+    conection = get_connection()
+    cursor = conection.cursor()
+
+
+    try:
+        cursor.execute("UPDATE reservaParticipante SET resenado = NOT resenado WHERE id_reserva = %s", (id))
+        conection.commit()
+        return jsonify({'mensaje': 'Respuesta confirmada correctamente'}), 201
+
+    except Exception as e:
+        conection.rollback()
+        return jsonify({'error': str(e)}), 500
+
+    finally:
+        cursor.close()
+        conection.close()
+
+
+
 
 #Modificar una reserva 
 @reservas_bp.route('/modificar/<int:id>', methods=['PUT'])
