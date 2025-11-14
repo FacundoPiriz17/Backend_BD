@@ -1,7 +1,6 @@
 from flask import Blueprint, jsonify, request
 from db import get_connection
-from validators import validar_ci
-from datetime import datetime
+from validators import validar_ci, validate_sancion_dates
 from validation import verificar_token, requiere_rol
 
 sanciones_bp = Blueprint('sanciones', __name__, url_prefix='/sanciones')
@@ -57,46 +56,41 @@ def aniadirSancion():
     cursor = conection.cursor()
     data = request.get_json()
     ci_participante = data.get("ci_participante")
-    descripcion = data.get("descripcion")
+    motivo = data.get("motivo")
     fecha_inicio = data.get("fecha_inicio")
     fecha_fin = data.get("fecha_fin")
 
-    if not all([ci_participante, descripcion, fecha_inicio, fecha_fin]):
+    if not all([ci_participante, motivo, fecha_inicio, fecha_fin]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
-
     if not validar_ci(ci_participante):
         return jsonify({'error': 'Cédula inválida'}), 400
+    try:
+        validate_sancion_dates(fecha_inicio, fecha_fin)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
 
-    #Verifica que el usuario no una sanción previa
-    cursor.execute("SELECT * FROM sancion_participante WHERE ci_participante = %s AND fecha_fin > CURDATE();",
-                   (ci_participante,))
-    resultado = cursor.fetchone()
-    if resultado:
-        cursor.close()
+    cur2 = conection.cursor(dictionary=True)
+    cur2.execute("""
+                 SELECT 1
+                 FROM sancion_participante
+                 WHERE ci_participante = %s
+                   AND CURDATE() BETWEEN fecha_inicio AND fecha_fin LIMIT 1
+                 """, (ci_participante,))
+    if cur2.fetchone():
+        cur2.close();
         conection.close()
         return jsonify({"error": "El participante ya tiene una sanción activa"}), 400
-
-    # Validar fechas: fecha_fin > fecha_inicio
-    try:
-        fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
-        ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
-    except Exception:
-        return jsonify({'error': 'Formato de fecha inválido. Use YYYY-MM-DD'}), 400
-
-    if ff <= fi:
-        return jsonify({'error': 'La fecha de fin debe ser posterior a la de inicio.'}), 400
+    cur2.close()
 
     try:
         cursor.execute(
             "INSERT INTO sancion_participante (ci_participante, motivo, fecha_inicio, fecha_fin) VALUES (%s,%s,%s,%s)",
-            (ci_participante, descripcion, fecha_inicio, fecha_fin))
+            (ci_participante, motivo, fecha_inicio, fecha_fin))
         conection.commit()
         return jsonify({'mensaje': 'Sanción registrada correctamente'}), 201
-
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
@@ -110,37 +104,35 @@ def modificarSancion(id):
     cursor = conection.cursor()
     data = request.get_json()
     ci_participante = data.get("ci_participante")
-    descripcion = data.get("descripcion")
+    motivo = data.get("motivo")
     fecha_inicio = data.get("fecha_inicio")
     fecha_fin = data.get("fecha_fin")
 
-    if not all([ci_participante, descripcion, fecha_inicio, fecha_fin]):
+    if not all([ci_participante, motivo, fecha_inicio, fecha_fin]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
-
     if not validar_ci(ci_participante):
         return jsonify({'error': 'Cédula inválida'}), 400
+    try:
+        validate_sancion_dates(fecha_inicio, fecha_fin)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
 
     try:
-        from datetime import datetime
-        fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
-        ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
-    except Exception:
-        return jsonify({'error': 'Formato de fecha inválido. Use YYYY-MM-DD'}), 400
-
-    if ff <= fi:
-        return jsonify({'error': 'La fecha de fin debe ser posterior a la de inicio.'}), 400
-
-    try:
-        cursor.execute(
-            "UPDATE sancion_participante SET  ci_participante = %s, motivo = %s, fecha_inicio = %s, fecha_fin = %s WHERE id_sancion = %s",
-            (ci_participante, descripcion, fecha_inicio, fecha_fin, id))
+        cursor.execute("""
+                       UPDATE sancion_participante
+                       SET ci_participante = %s,
+                           motivo          = %s,
+                           fecha_inicio    = %s,
+                           fecha_fin       = %s
+                       WHERE id_sancion = %s
+                       """, (ci_participante, motivo, fecha_inicio, fecha_fin, id))
         conection.commit()
-        return jsonify({'mensaje': 'Sancion modificada correctamente'}), 200
-
+        if cursor.rowcount == 0:
+            return jsonify({'mensaje': 'Sanción no encontrada'}), 404
+        return jsonify({'mensaje': 'Sanción modificada correctamente'}), 200
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
@@ -153,18 +145,15 @@ def modificarSancion(id):
 def eliminarSancion(id):
     conection = get_connection()
     cursor = conection.cursor()
-
     try:
-        cursor.execute("DELETE FROM sancion_participante WHERE id_sancion = %s", (id,) )
+        cursor.execute("DELETE FROM sancion_participante WHERE id_sancion = %s", (id,))
         conection.commit()
-        return jsonify({'mensaje':'Sanción eliminada correctamente'}), 204
-        
-
+        if cursor.rowcount == 0:
+            return jsonify({'mensaje': 'Sanción no encontrada'}), 404
+        return jsonify({'mensaje':'Sanción eliminada correctamente'}), 200
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
-

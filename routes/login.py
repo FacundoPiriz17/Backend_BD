@@ -4,7 +4,7 @@ import datetime
 from db import get_connection
 from hash_function import hasheo, verificar_contrasena
 from validation import requiere_rol, verificar_token
-from validators import validar_ci, validar_email_ucu, validar_insercion_usuario
+from validators import validar_ci, validar_email_ucu
 
 login_bp = Blueprint('login', __name__, url_prefix='/login')
 
@@ -22,6 +22,10 @@ def registrar_usuario():
     rol = data.get('rol')
     contrasena = data.get('contrasena')
 
+    programa = data.get('programa') or {}
+    nombre_plan = (programa.get('nombre_plan') or '').strip()
+    rol_academico = (programa.get('rol') or '').strip()
+
     if not all([ci, nombre, apellido, email, rol, contrasena]) or not all(str(x).strip() for x in [ci, nombre, apellido, email, rol, contrasena]):
         return jsonify({'error': 'Datos insuficientes'}), 400
 
@@ -31,44 +35,74 @@ def registrar_usuario():
     if not validar_email_ucu(email):
         return jsonify({'error': 'Email no válido. Debe ser @correo.ucu.edu.uy o @ucu.edu.uy'}), 400
 
-    ok, msg = validar_insercion_usuario(rol)
-    # Si ok == False y rol administrativo, la función devolvió False y un mensaje de que es rol administrativo.
-    # En registro, eso no es un error: simplemente indica que no se debe insertar plan académico. No bloqueamos el registro.
-    # Dejamos la lógica tal como: si es admin/funcionario no se requiere plan académico.
-    # Por ahora solo usamos el mensaje para info en caso de querer extender comportamiento.
+    if rol not in ('Participante', 'Funcionario', 'Administrador'):
+        return jsonify({'error': "Rol inválido. Use 'Participante', 'Funcionario' o 'Administrador'"}), 400
 
-    conection = get_connection()
-    cursor = conection.cursor()
+    requiere_programa = (rol == 'Participante')
+    if requiere_programa:
+        if not all([nombre_plan, rol_academico]):
+            return jsonify({'error': 'Faltan datos de programa académico: nombre_plan y rol'}), 400
+        if rol_academico not in ('Alumno', 'Docente'):
+            return jsonify({'error': "Rol académico inválido. Use 'Alumno' o 'Docente'"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
     try:
-        cursor.execute(
+        cur.execute("SELECT 1 FROM usuario WHERE ci = %s OR email = %s LIMIT 1", (ci, email))
+        if cur.fetchone():
+            return jsonify({'error': 'Ya existe un usuario con esa CI o email'}), 400
+
+        cur2 = con.cursor()
+        cur2.execute(
             "INSERT INTO usuario (ci, nombre, apellido, email, rol) VALUES (%s, %s, %s, %s, %s)",
             (ci, nombre, apellido, email, rol)
         )
 
         contrasena_hasheada = hasheo(contrasena)
-
-        cursor.execute(
+        cur2.execute(
             "INSERT INTO login (email, contrasena) VALUES (%s, %s)",
             (email, contrasena_hasheada)
         )
 
-        conection.commit()
+        if requiere_programa:
+            cur2.execute("SELECT 1 FROM planAcademico WHERE nombre_plan = %s LIMIT 1", (nombre_plan,))
+            if cur2.fetchone() is None:
+                con.rollback()
+                return jsonify({'error': 'El plan académico indicado no existe'}), 400
+
+            cur2.execute("""
+                         SELECT 1
+                         FROM participanteProgramaAcademico
+                         WHERE ci_participante = %s
+                           AND nombre_plan = %s LIMIT 1
+                         """, (ci, nombre_plan))
+            if cur2.fetchone():
+                con.rollback()
+                return jsonify({'error': 'El participante ya está asociado a ese plan académico'}), 400
+
+            cur2.execute("""
+                         INSERT INTO participanteProgramaAcademico (ci_participante, nombre_plan, rol)
+                         VALUES (%s, %s, %s)
+                         """, (ci, nombre_plan, rol_academico))
+
+        con.commit()
         return jsonify({'respuesta': 'Usuario creado correctamente'}), 201
+
     except Exception as e:
-        conection.rollback()
+        con.rollback()
         return jsonify({'error': str(e)}), 400
     finally:
-        cursor.close()
-        conection.close()
+        cur.close();
+        con.close()
 
 @login_bp.route('/usuarios', methods=['GET'])
 @verificar_token
 @requiere_rol('Administrador', 'Funcionario')
 def obtener_usuarios():
     connection = get_connection()
-    cursor = connection.cursor()
+    cursor = connection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM usuario")
+        cursor.execute("SELECT ci, nombre, apellido, email, rol FROM usuario")
         usuarios = cursor.fetchall()
         return jsonify(usuarios), 200
     except Exception as e:
@@ -113,8 +147,16 @@ def actualizar_usuario(ci):
         return jsonify({'error': 'Email no válido. Debe ser @correo.ucu.edu.uy o @ucu.edu.uy'}), 400
 
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
     try:
+
+        cursor.execute("SELECT email FROM usuario WHERE ci = %s", (ci,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        email_anterior = row['email']
+
+        cursor = conn.cursor()
         cursor.execute("UPDATE usuario SET nombre = %s, apellido = %s, email = %s, rol = %s WHERE ci = %s",
                        (nombre, apellido, email, rol, ci))
 
@@ -123,11 +165,11 @@ def actualizar_usuario(ci):
 
         if contrasena:
             contrasena_hasheada = hasheo(contrasena)
-            cursor.execute("""
-                UPDATE login
-                SET contrasena = %s
-                WHERE email = %s
-            """, (contrasena_hasheada, email))
+            cursor.execute("UPDATE login SET contrasena = %s WHERE email = %s",
+                           (contrasena_hasheada, email_anterior))
+        if email != email_anterior:
+            cursor.execute("UPDATE login SET email = %s WHERE email = %s",
+                           (email, email_anterior))
 
         conn.commit()
         return jsonify({'mensaje': 'Usuario actualizado correctamente'}), 200
@@ -142,29 +184,40 @@ def actualizar_usuario(ci):
 @verificar_token
 @requiere_rol('Administrador')
 def eliminar_usuario(ci):
-    conn = get_connection()
-    cursor = conn.cursor()
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
     try:
-        cursor.execute("""
-            DELETE FROM login
-            WHERE email = (SELECT email FROM usuario WHERE ci = %s)
-        """, (ci,))
-        cursor.execute("DELETE FROM usuario WHERE ci = %s", (ci,))
+        cur.execute("SELECT email FROM usuario WHERE ci = %s", (ci,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        email = row['email']
 
-        if cursor.rowcount == 0:
+        cur2 = con.cursor()
+        cur2.execute("DELETE FROM participanteProgramaAcademico WHERE ci_participante = %s", (ci,))
+
+
+        cur2.execute("DELETE FROM reservaParticipante WHERE ci_participante = %s", (ci,))
+
+        cur2.execute("DELETE FROM login WHERE email = %s", (email,))
+
+        cur2.execute("DELETE FROM usuario WHERE ci = %s", (ci,))
+        if cur2.rowcount == 0:
+            con.rollback()
             return jsonify({'error': 'Usuario no encontrado'}), 404
 
-        conn.commit()
+        con.commit()
         return jsonify({'mensaje': 'Usuario eliminado correctamente'}), 200
+
     except Exception as e:
-        conn.rollback()
-        error_msg = str(e)
-        if 'foreign key constraint' in error_msg.lower():
-            return jsonify({'error': 'No se puede eliminar un usuario con registros asociados'}), 400
-        return jsonify({'error': error_msg}), 400
+        con.rollback()
+        err = str(e)
+        if 'foreign key constraint' in err.lower():
+            return jsonify({'error': 'No se puede eliminar: existen registros asociados'}), 400
+        return jsonify({'error': err}), 400
     finally:
-        cursor.close()
-        conn.close()
+        cur.close();
+        con.close()
 
 @login_bp.route('/inicio', methods=['POST'])
 def login_usuario():
