@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from db import get_connection
 from validation import verificar_token, requiere_rol
-
+from validators import validar_disponibilidad_sala
 salas_bp = Blueprint('salas', __name__, url_prefix='/salas')
 
 # Mostrar todas las salas
@@ -56,6 +56,27 @@ def obtener_sala(nombre_sala, edificio):
         cursor.close()
         connection.close()
 
+@salas_bp.route('/<string:edificio>', methods=['GET'])
+@verificar_token
+def obtener_salas_edificio(edificio):
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT * FROM salasDeEstudio
+            WHERE edificio = %s
+        """, (edificio,))
+        salas = cursor.fetchall()
+        if salas:
+            return jsonify(salas)
+        return jsonify({'mensaje': 'Edificio no Tiene salas'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+
 @salas_bp.route('/registrar', methods=['POST'])
 @verificar_token
 @requiere_rol('Administrador')
@@ -69,6 +90,9 @@ def crear_sala():
 
     if not all([nombre_sala, edificio, capacidad, tipo_sala]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
+
+    if tipo_sala not in ('Libre', 'Posgrado', 'Docente'):
+        return jsonify({'error': 'tipo_sala inválido'}), 400
 
     try:
         capacidad_int = int(capacidad)
@@ -210,7 +234,7 @@ def cambiar_disponibilidad_sala():
         return jsonify({'error': 'Faltan datos requeridos'}), 400
 
     connection = get_connection()
-    cursor = connection.cursor()
+    cursor = connection.cursor(dictionary=True)
     try:
         cursor.execute("""
             UPDATE salasDeEstudio

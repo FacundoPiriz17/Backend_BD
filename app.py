@@ -27,6 +27,11 @@ app.register_blueprint(reservas_bp)
 
 app.register_blueprint(salas_bp)
 
+@app.before_request
+def handle_preflight():
+    from flask import request
+    if request.method == "OPTIONS":
+        return ("", 200)
 @app.route('/')
 def init():
     return 'Bienvenidos a la api del obligatorio de BD 2025'

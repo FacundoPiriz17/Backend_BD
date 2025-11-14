@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from db import get_connection
-from validation import verificar_token
+from validation import verificar_token, requiere_rol
+from validators import validate_turno_rango
 
 turno_bp = Blueprint('/turnos', __name__, url_prefix='/turnos')
 
@@ -43,3 +44,39 @@ def turnoEspecifico(id):
     finally:
         cursor.close()
         conection.close()
+
+@turno_bp.route("", methods=["POST"])
+@verificar_token
+@requiere_rol('Administrador')
+def crear_turno():
+    data = request.get_json() or {}
+    hora_inicio = data.get("hora_inicio")
+    hora_fin = data.get("hora_fin")
+
+    conn = None
+    cur = None
+    try:
+        if not hora_inicio or not hora_fin:
+            raise ValueError("Faltan campos: hora_inicio, hora_fin.")
+        validate_turno_rango(hora_inicio, hora_fin)
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO turno (hora_inicio, hora_fin) VALUES (%s, %s)",
+            (hora_inicio, hora_fin),
+        )
+        conn.commit()
+        return jsonify({"id_turno": cur.lastrowid}), 201
+
+    except ValueError as ve:
+        if conn: conn.rollback()
+        return jsonify({"error": str(ve)}), 400
+    except Exception:
+        if conn: conn.rollback()
+        return jsonify({"error": "Error interno"}), 500
+    finally:
+        try:
+            if cur: cur.close()
+        finally:
+            if conn: conn.close()

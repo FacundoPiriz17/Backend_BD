@@ -3,12 +3,19 @@ from db import get_connection
 from validators import (
     validar_disponibilidad_sala,
     validar_tipo_sala,
-    validar_limites_reserva,
     validar_anticipacion_reserva,
     validar_cancelacion_reserva,
     validar_sanciones_activas,
+    validate_reserva_fecha,
+    validate_reserva_participante_fecha,
+    ensure_no_solapamiento_de_reserva,
+    ensure_capacidad_no_superada,
+    ensure_reglas_usuario,
+    validar_ci,
+    es_organizador
 )
-from datetime import datetime
+from datetime import date as _date
+from datetime import timedelta
 from validation import verificar_token, requiere_rol
 reservas_bp = Blueprint('reservas', __name__, url_prefix='/reservas')
 
@@ -21,15 +28,14 @@ def reservas():
     cursor = conection.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM reserva")
-        resultados = cursor.fetchall()  # Obtiene TODAS las filas del resultado
+        resultados = cursor.fetchall()
         return jsonify(resultados)
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
+
 
 #Obtener una reserva específica
 @reservas_bp.route('/<int:id>', methods=['GET'])
@@ -38,18 +44,15 @@ def reservas():
 def reservaEspecifica(id):
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
-
     try:
-        cursor.execute("SELECT * FROM reserva WHERE id_reserva = %s", (id,) )
+        cursor.execute("SELECT * FROM reserva WHERE id_reserva = %s", (id,))
         reserva = cursor.fetchone()
         if reserva:
             return jsonify(reserva)
         else:
             return jsonify({'mensaje': 'Reserva no encontrada'}), 404
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
@@ -57,7 +60,7 @@ def reservaEspecifica(id):
 #Añadir una reserva
 @reservas_bp.route('/registrar', methods=['POST'])
 @verificar_token
-@requiere_rol('Participante', 'Administrador','Funcionario')
+@requiere_rol('Participante')
 def aniadirReserva():
     conection = get_connection()
     cursor = conection.cursor()
@@ -73,50 +76,72 @@ def aniadirReserva():
 
     if not all([nombre_sala, edificio, fecha, id_turno, ci]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
+    if not validar_ci(ci):
+        return jsonify({'error': 'CI inválida'}), 400
+    if estado not in ("Activa", "Finalizada", "Sin asistencia", "Cancelada"):
+        return jsonify({'error': "Estado inválido. Use 'Activa', 'Finalizada', 'Sin asistencia' o 'Cancelada'"}), 400
 
-    ok, msg = validar_disponibilidad_sala(nombre_sala, edificio)
-    if not ok:
-        return jsonify({'error': msg}), 400
+    usuario = getattr(request, 'usuario_actual', {})
+    ci_token = usuario.get("ci")
+    rol_token = usuario.get("rol")
 
-    ok, msg = validar_sanciones_activas(ci)
-    if not ok:
-        return jsonify({'error': msg}), 400
+    if rol_token == 'Participante':
+        if ci_token is None or int(ci_token) != int(ci):
+            return jsonify({'error': 'No autorizado: el CI del token no coincide con el organizador'}), 403
 
-    ok, msg = validar_tipo_sala(edificio, nombre_sala, ci, participantes_ci)
-    if not ok:
-        return jsonify({'error': msg}), 400
-
-    ok, msg = validar_limites_reserva(ci, fecha)
-    if not ok:
-        return jsonify({'error': msg}), 400
-
-    ok, msg = validar_anticipacion_reserva(id_turno, fecha)
-    if not ok:
-        return jsonify({'error': msg}), 400
+    cusr = conection.cursor()
+    cusr.execute("SELECT 1 FROM usuario WHERE ci = %s LIMIT 1", (ci,))
+    if cusr.fetchone() is None:
+        cusr.close()
+        return jsonify({'error': 'El organizador no existe en el sistema'}), 400
+    cusr.close()
 
     try:
-        cursor.execute("""
-                       INSERT INTO reserva (nombre_sala, edificio, fecha, id_turno, estado)
-                       VALUES (%s, %s, %s, %s, %s)
-                       """, (nombre_sala, edificio, fecha, id_turno, estado))
-        conection.commit()
+        validate_reserva_fecha(fecha)
 
+        ok, msg = validar_disponibilidad_sala(nombre_sala, edificio)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ok, msg = validar_sanciones_activas(ci)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ok, msg = validar_tipo_sala(edificio, nombre_sala, ci, participantes_ci)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ok, msg = validar_anticipacion_reserva(id_turno, fecha)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ensure_no_solapamiento_de_reserva(conection, nombre_sala, edificio, fecha, id_turno)
+
+        cursor.execute("""
+                       INSERT INTO reserva (nombre_sala, edificio, fecha, id_turno, estado, ci_organizador)
+                       VALUES (%s, %s, %s, %s, %s, %s)
+                       """, (nombre_sala, edificio, fecha, id_turno, estado, ci))
+        conection.commit()
         id_reserva = cursor.lastrowid
 
+        ensure_reglas_usuario(conection, ci, id_reserva)
+
         cursor.execute("""
-                       INSERT INTO reservaParticipante (ci_participante, id_reserva, asistencia, confirmacion)
-                       VALUES (%s, %s, %s, %s)
-                       """, (ci, id_reserva, 'Asiste', True))
+                       INSERT INTO reservaParticipante
+                       (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia, confirmacion)
+                       VALUES (%s, %s, %s, %s, %s)
+                       """, (ci, id_reserva, _date.today().strftime("%Y-%m-%d"), 'Asiste', True))
         conection.commit()
 
-        return jsonify({
-            'mensaje': 'Reserva registrada correctamente',
-            'id_reserva': id_reserva
-        }), 201
+        ensure_capacidad_no_superada(conection, id_reserva)
+
+        return jsonify({'mensaje': 'Reserva registrada correctamente', 'id_reserva': id_reserva}), 201
+
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
@@ -129,39 +154,63 @@ def invitarParticipante():
     cursor = conection.cursor(dictionary=True)
     data = request.get_json()
 
-    email_invitado = data.get("email_invitado")
+    email_invitado = (data.get("email_invitado") or "").strip().lower()
     id_reserva = data.get("id_reserva")
     asistencia = data.get("asistencia", "Asiste")
+    fecha_solicitud = data.get("fecha_solicitud_reserva") or _date.today().strftime("%Y-%m-%d")
 
     if not all([email_invitado, id_reserva]):
         return jsonify({'error': 'Faltan datos requeridos'}), 400
 
+    usuario = getattr(request, 'usuario_actual', {})
+    ci_token = usuario.get("ci")
+    rol_token = usuario.get("rol")
+
+    if rol_token == 'Participante':
+        if not es_organizador(conection, id_reserva, ci_token):
+            return jsonify({'error': 'Solo el organizador puede invitar participantes a esta reserva'}), 403
+
     try:
+        validate_reserva_participante_fecha(fecha_solicitud)
 
         cursor.execute("SELECT ci FROM usuario WHERE email = %s", (email_invitado,))
         invitado = cursor.fetchone()
         if not invitado:
             return jsonify({'error': 'No existe un usuario con ese email'}), 404
-
         ci_invitado = invitado["ci"]
+        if not validar_ci(ci_invitado):
+            return jsonify({'error': 'CI del invitado inválida'}), 400
 
-        cursor.execute("""
-            INSERT INTO reservaParticipante (ci_participante, id_reserva, asistencia, confirmacion)
-            VALUES (%s, %s, %s, %s)
-        """, (ci_invitado, id_reserva, asistencia, False))
+        if ci_token and int(ci_invitado) == int(ci_token):
+            return jsonify({'error': 'El organizador ya forma parte de la reserva'}), 400
+
+        ok, msg = validar_sanciones_activas(ci_invitado)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ensure_reglas_usuario(conection, ci_invitado, id_reserva)
+
+        cur = conection.cursor()
+        cur.execute("""
+                    INSERT INTO reservaParticipante (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia,
+                                                     confirmacion)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """, (ci_invitado, id_reserva, fecha_solicitud, asistencia, False))
         conection.commit()
+
+        ensure_capacidad_no_superada(conection, id_reserva)
 
         return jsonify({'mensaje': 'Invitado agregado correctamente a la reserva'}), 201
 
     except Exception as e:
         conection.rollback()
-        if "Duplicate entry" in str(e):
+        err = str(e)
+        if "Duplicate entry" in err:
             return jsonify({'error': 'El usuario ya está invitado a esta reserva'}), 400
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': err}), 500
     finally:
         cursor.close()
         conection.close()
-
 #Modificar una reserva 
 @reservas_bp.route('/modificar/<int:id>', methods=['PUT'])
 @verificar_token
@@ -177,6 +226,10 @@ def modificarReserva(id):
     estado = data.get("estado")
 
     try:
+        if fecha: validate_reserva_fecha(fecha)
+        if all([nombre_sala, edificio, fecha, id_turno]):
+            ensure_no_solapamiento_de_reserva(conection, nombre_sala, edificio, fecha, id_turno)
+
         cursor.execute("""
                        UPDATE reserva
                        SET nombre_sala = %s,
@@ -187,36 +240,12 @@ def modificarReserva(id):
                        WHERE id_reserva = %s
                        """, (nombre_sala, edificio, fecha, id_turno, estado, id))
         conection.commit()
-
+        if cursor.rowcount == 0:
+            return jsonify({'mensaje': 'Reserva no encontrada'}), 404
         return jsonify({'mensaje': 'Reserva modificada correctamente'}), 200
     except Exception as e:
-
         conection.rollback()
         return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conection.close()
-
-#Cancela una reserva 
-@reservas_bp.route('/cancelar/<int:id>', methods=['PATCH'])
-@verificar_token
-def cancelarReserva(id):
-    conection = get_connection()
-    cursor = conection.cursor()
-
-    ok, msg = validar_cancelacion_reserva(id)
-    if not ok:
-        return jsonify({'error': msg}), 400
-
-    try:
-        cursor.execute("UPDATE reserva SET estado = 'Cancelada' WHERE id_reserva = %s", (id))
-        conection.commit()
-        return jsonify({'mensaje': 'Reserva cancelada correctamente'}), 201
-
-    except Exception as e:
-        conection.rollback()
-        return jsonify({'error': str(e)}), 500
-
     finally:
         cursor.close()
         conection.close()
@@ -228,11 +257,119 @@ def cancelarReserva(id):
 def eliminarReserva(id):
     conection = get_connection()
     cursor = conection.cursor()
+    try:
+        cursor.execute("DELETE FROM reserva WHERE id_reserva = %s", (id,))
+        conection.commit()
+        if cursor.rowcount == 0:
+            return jsonify({'mensaje': 'Reserva no encontrada'}), 404
+        return jsonify({'mensaje':'Reserva eliminada correctamente'}), 200
+    except Exception as e:
+        conection.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conection.close()
+
+@reservas_bp.route('/cancelar/<int:id>', methods=['PATCH'])
+@verificar_token
+@requiere_rol('Participante','Administrador','Funcionario')
+def cancelarReserva(id):
+    conection = get_connection()
+    cursor = conection.cursor()
+    usuario = getattr(request, 'usuario_actual', {})
+    ci_token = usuario.get("ci")
+    rol_token = usuario.get("rol")
+    if rol_token == 'Participante':
+        if not es_organizador(conection, id, ci_token):
+            cursor.close();
+            conection.close()
+            return jsonify({'error': 'Solo el organizador puede cancelar esta reserva'}), 403
+
+    ok, msg = validar_cancelacion_reserva(id)
+    if not ok:
+        cursor.close();
+        conection.close()
+        return jsonify({'error': msg}), 400
 
     try:
-        cursor.execute("DELETE FROM reserva WHERE id_reserva = %s", (id,) )
+        cursor.execute("UPDATE reserva SET estado = 'Cancelada' WHERE id_reserva = %s", (id,))
+        if cursor.rowcount == 0:
+            conection.rollback()
+            return jsonify({'mensaje': 'Reserva no encontrada'}), 404
         conection.commit()
-        return jsonify({'mensaje':'Reserva eliminada correctamente'}), 204
+        return jsonify({'mensaje': 'Reserva cancelada correctamente'}), 200
+    except Exception as e:
+        conection.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conection.close()
+
+@reservas_bp.route('/confirmacion/<int:id>', methods=['PATCH'])
+@verificar_token
+@requiere_rol('Participante')
+def confirmarInvitado(id):
+    usuario = getattr(request, 'usuario_actual', {})
+    ci = usuario.get('ci')
+    data = request.get_json()
+    confirmacion = data.get("confirmacion")
+
+    if confirmacion is None:
+        return jsonify({"error": "Parámetro 'confirmar' (true/false) requerido"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+
+    try:
+        cur.execute("SELECT ci_organizador FROM reserva WHERE id_reserva = %s", (id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "Reserva no encontrada"}), 404
+        if int(row['ci_organizador']) == int(ci):
+            return jsonify({"error": "El organizador no usa confirmación de invitado"}), 400
+        cur2 = con.cursor()
+        if confirmacion:
+            cur2.execute("""
+                         UPDATE reservaParticipante
+                         SET confirmacion = 1,
+                             asistencia   = 'Asiste'
+                         WHERE id_reserva = %s
+                           AND ci_participante = %s
+                         """, (id, ci))
+        else:
+            cur2.execute("""
+                     UPDATE reservaParticipante
+                     SET confirmacion = 0,
+                         asistencia   = 'No asiste'
+                     WHERE id_reserva = %s
+                       AND ci_participante = %s
+                     """, (id, ci))
+        con.commit()
+
+        if cur2.rowcount == 0:
+            return jsonify({"error": "Invitación no encontrada"}), 404
+
+        return jsonify({
+            "mensaje": "Invitación aceptada" if confirmacion else "Invitación rechazada",
+            "confirmacion": bool(confirmacion),
+            "asistencia": "Asiste" if confirmacion else "No asiste"
+        }), 200
+    finally:
+        cur.close();
+        con.close()
+
+#Sala reseñada
+@reservas_bp.route('/resena/<int:id>', methods=['PATCH'])
+@verificar_token
+@requiere_rol('Participante')
+def actualizarResenia(id):
+    conection = get_connection()
+    cursor = conection.cursor()
+
+    try:
+        cursor.execute("UPDATE reservaParticipante SET resenado = NOT resenado WHERE id_reserva = %s", (id))
+        conection.commit()
+        return jsonify({'mensaje': 'Respuesta confirmada correctamente'}), 201
 
     except Exception as e:
         conection.rollback()
@@ -242,3 +379,164 @@ def eliminarReserva(id):
         cursor.close()
         conection.close()
 
+
+@reservas_bp.route('/cedula', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante')
+def reservas_por_cedula():
+    user = getattr(request, 'usuario_actual', {}) or {}
+    ci_token = user.get('ci')
+    rol = user.get('rol')
+
+    ci = (request.args.get('ci') or '').strip()
+
+    if not ci:
+        return jsonify({"error": "Parámetro 'ci' es requerido"}), 400
+
+    try:
+        ci_int = int(ci)
+    except ValueError:
+        return jsonify({"error": "La cédula debe ser numérica"}), 400
+
+    if rol == 'Participante' and ci_token is not None and int(ci_token) != ci_int:
+        return jsonify({"error": "No autorizado para consultar reservas de otra cédula"}), 403
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT
+                r.id_reserva,
+                r.nombre_sala,
+                r.edificio,
+                r.fecha,
+                r.id_turno,
+                r.estado,
+                r.ci_organizador,
+                t.hora_inicio,
+                t.hora_fin,
+                rp.confirmacion,
+                rp.asistencia,
+                (r.ci_organizador = %s) AS soyOrganizador
+            FROM reserva r
+            JOIN turno t ON t.id_turno = r.id_turno
+            LEFT JOIN reservaParticipante rp
+                   ON rp.id_reserva = r.id_reserva
+                  AND rp.ci_participante = %s
+            WHERE r.ci_organizador = %s
+               OR EXISTS (
+                    SELECT 1
+                      FROM reservaParticipante rpx
+                     WHERE rpx.id_reserva = r.id_reserva
+                       AND rpx.ci_participante = %s
+               )
+            ORDER BY r.fecha DESC, r.id_turno DESC
+        """, (ci_int, ci_int, ci_int, ci_int))
+        filas = cur.fetchall()
+
+        for f in filas:
+            hi = f.get("hora_inicio")
+            hf = f.get("hora_fin")
+            if isinstance(hi, timedelta):
+                f["hora_inicio"] = str(hi)
+            if isinstance(hf, timedelta):
+                f["hora_fin"] = str(hf)
+
+        return jsonify(filas), 200
+
+    except Exception as e:
+        print("ERROR en /reservas/cedula:", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
+
+@reservas_bp.route('/invitaciones', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante')
+def reservas_invitaciones():
+
+    estado = (request.args.get('estado') or '').strip().lower()
+    user = getattr(request, 'usuario_actual', {})
+    ci = user.get('ci')
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        filtro = ""
+        if estado == 'pendiente':
+            filtro = "AND rp.confirmacion = 0"
+        elif estado in ('confirmada', 'confirmadas'):
+            filtro = "AND rp.confirmacion = 1"
+
+        cur.execute(f"""
+            SELECT r.id_reserva, r.nombre_sala, r.edificio, r.fecha, r.id_turno,
+                   t.hora_inicio, t.hora_fin, rp.confirmacion
+            FROM reserva r
+            JOIN reservaParticipante rp ON rp.id_reserva = r.id_reserva
+            JOIN turno t ON t.id_turno = r.id_turno
+            WHERE rp.ci_participante = %s
+              AND r.ci_organizador <> %s
+              {filtro}
+            ORDER BY r.fecha DESC, r.id_turno DESC
+        """, (ci, ci))
+        filas = cur.fetchall()
+
+        items = []
+        for f in filas:
+            items.append({
+                "id": f"{f['id_reserva']}-{ci}",
+                "reservaId": f['id_reserva'],
+                "sala": f['nombre_sala'],
+                "edificio": f['edificio'],
+                "fecha": str(f['fecha']),
+                "turno": f"{str(f['hora_inicio'])[:5]}–{str(f['hora_fin'])[:5]}",
+                "confirmacion": bool(f['confirmacion']),
+            })
+        return jsonify(items)
+    finally:
+        cur.close(); con.close()
+
+@reservas_bp.route('/salir/<int:id_reserva>', methods=['DELETE'])
+@verificar_token
+@requiere_rol('Participante', 'Administrador', 'Funcionario')
+def salir_de_reserva(id_reserva):
+
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    ci_token = usuario.get('ci')
+    rol = usuario.get('rol')
+
+    if rol == 'Participante' and ci_token is None:
+        return jsonify({"error": "CI no encontrada en el token"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT ci_organizador FROM reserva WHERE id_reserva = %s", (id_reserva,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "Reserva no encontrada"}), 404
+
+        ci_organizador = int(row['ci_organizador'])
+
+        if rol == 'Participante' and int(ci_token) == ci_organizador:
+            return jsonify({"error": "El organizador no puede salir de la reserva de esta forma"}), 400
+
+        cur2 = con.cursor()
+        cur2.execute(
+            "DELETE FROM reservaParticipante WHERE id_reserva = %s AND ci_participante = %s",
+            (id_reserva, ci_token),
+        )
+        con.commit()
+
+        if cur2.rowcount == 0:
+            return jsonify({"error": "No estabas registrado en esta reserva"}), 404
+
+        return jsonify({"mensaje": "Te has salido de la reserva correctamente"}), 200
+
+    except Exception as e:
+        con.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
