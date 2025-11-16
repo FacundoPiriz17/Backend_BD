@@ -13,6 +13,7 @@ def run_query(query):
         cursor.execute(query)
         resultados = cursor.fetchall()
         return jsonify(resultados)
+
     except Exception as e:
         return  jsonify({'error': str(e)}), 500
     finally:
@@ -34,12 +35,15 @@ def salas_mas_reservadas():
     return run_query(query)
 
 # Turnos mas demandados:
-@stats_bp.route('/turnos_mas_demanados', methods=['GET'])
+@stats_bp.route('/turnos_mas_demandados', methods=['GET'])
 @verificar_token
 @requiere_rol('Administrador', 'Funcionario')
 def turnos_mas_demandados():
-    query = ''' 
-    SELECT t.id_turno, t.hora_inicio, t.hora_fin, COUNT(r.id_reserva) AS total_reservas
+    query = '''
+    SELECT t.id_turno, 
+           TIME_FORMAT(t.hora_inicio, '%H:%i') AS hora_inicio,
+           TIME_FORMAT(t.hora_fin, '%H:%i') AS hora_fin,
+           COUNT(r.id_reserva) AS total_reservas
     FROM turno t
     LEFT JOIN reserva r ON t.id_turno = r.id_turno
     GROUP BY t.id_turno, t.hora_inicio, t.hora_fin
