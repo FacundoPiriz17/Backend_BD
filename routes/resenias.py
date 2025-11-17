@@ -145,10 +145,10 @@ def aniadirResenia():
 #Modificar una reseña 
 @resenias_bp.route('/modificar/<int:id>', methods=['PUT'])
 @verificar_token
-@requiere_rol('Participante')
+@requiere_rol('Administrador','Funcionario')
 def modificarResenia(id):
     conection = get_connection()
-    cursor = conection.cursor()
+    cursor = conection.cursor(dictionary=True)
     data = request.get_json()
 
     ci_participante = data.get("ci_participante")
