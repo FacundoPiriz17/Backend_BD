@@ -245,7 +245,7 @@ def login_usuario():
                     "ci": usuario["ci"],
                     "email": usuario["email"],
                     "rol": usuario["rol"],
-                    "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=2)
+                    "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
                 },
                 SECRET_KEY,
                 algorithm="HS256"
@@ -265,3 +265,146 @@ def login_usuario():
     finally:
         cursor.close()
         conn.close()
+
+@login_bp.route('/me', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante', 'Funcionario', 'Administrador')
+def obtener_mi_usuario():
+    user = getattr(request, 'usuario_actual', {}) or {}
+    ci = user.get('ci')
+
+    if not ci:
+        return jsonify({"error": "No se pudo obtener la cédula desde el token"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT ci, nombre, apellido, email, rol
+            FROM usuario
+            WHERE ci = %s
+        """, (ci,))
+        usuario = cur.fetchone()
+
+        if not usuario:
+            return jsonify({"error": "Usuario no encontrado"}), 404
+
+        programas = []
+        if usuario["rol"] == "Participante":
+            cur.execute("""
+                SELECT pa.nombre_plan, pa.tipo, ppa.rol
+                FROM participanteProgramaAcademico ppa
+                JOIN planAcademico pa ON pa.nombre_plan = ppa.nombre_plan
+                WHERE ppa.ci_participante = %s
+            """, (ci,))
+            programas = cur.fetchall()
+
+        cur.execute("""
+            SELECT id_sancion, motivo, fecha_inicio, fecha_fin
+            FROM sancion_participante
+            WHERE ci_participante = %s
+              AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+            ORDER BY fecha_fin DESC
+        """, (ci,))
+        sanciones = cur.fetchall()
+
+        return jsonify({
+            "usuario": usuario,
+            "programas": programas,
+            "sanciones_activas": sanciones
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
+
+@login_bp.route('/cambiar-contrasena', methods=['POST'])
+@verificar_token
+@requiere_rol('Participante', 'Funcionario', 'Administrador')
+def cambiar_contrasena():
+    user = getattr(request, 'usuario_actual', {}) or {}
+    email = user.get("email")
+
+    data = request.get_json()
+    actual = data.get("contrasena_actual")
+    nueva = data.get("contrasena_nueva")
+
+    if not all([actual, nueva]):
+        return jsonify({"error": "Faltan datos requeridos"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        # Obtener contraseña actual
+        cur.execute("""
+            SELECT contrasena
+            FROM login
+            WHERE email = %s
+        """, (email,))
+        row = cur.fetchone()
+
+        if not row:
+            return jsonify({"error": "Usuario no encontrado"}), 404
+
+        if not verificar_contrasena(actual, row["contrasena"]):
+            return jsonify({"error": "La contraseña actual es incorrecta"}), 400
+
+        # Guardar nueva contraseña
+        nueva_hash = hasheo(nueva)
+        cur2 = con.cursor()
+        cur2.execute("""
+            UPDATE login
+            SET contrasena = %s
+            WHERE email = %s
+        """, (nueva_hash, email))
+
+        con.commit()
+
+        return jsonify({"mensaje": "Contraseña actualizada correctamente"}), 200
+
+    except Exception as e:
+        con.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
+
+@login_bp.route('/renovar-token', methods=['POST'])
+@verificar_token
+@requiere_rol('Participante', 'Funcionario', 'Administrador')
+def renovar_token():
+
+    user = getattr(request, 'usuario_actual', {}) or {}
+    ci = user.get("ci")
+    email = user.get("email")
+    rol = user.get("rol")
+
+    if not all([ci, email, rol]):
+        return jsonify({"error": "No se pudo obtener la información del usuario desde el token"}), 400
+
+    try:
+        nueva_exp = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        nuevo_token = jwt.encode(
+            {
+                "ci": ci,
+                "email": email,
+                "rol": rol,
+                "exp": nueva_exp
+            },
+            SECRET_KEY,
+            algorithm="HS256"
+        )
+
+        if isinstance(nuevo_token, bytes):
+            nuevo_token = nuevo_token.decode("utf-8")
+
+        return jsonify({
+            "mensaje": "Token renovado correctamente",
+            "token": nuevo_token,
+            "exp": nueva_exp.isoformat() + "Z"
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

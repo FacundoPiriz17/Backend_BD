@@ -2,8 +2,35 @@ from flask import Blueprint, jsonify, request
 from db import get_connection
 from validation import verificar_token, requiere_rol
 from validators import validate_turno_rango
+from datetime import datetime, date, time, timedelta
+from decimal import Decimal
 
 turno_bp = Blueprint('/turnos', __name__, url_prefix='/turnos')
+
+def serialize_turno(row: dict | None):
+    if row is None:
+        return None
+
+    result = dict(row)
+
+    for k, v in result.items():
+        # Convertir datetime, date, time → string
+        if isinstance(v, (datetime, date, time)):
+            result[k] = v.isoformat()
+
+        # Convertir timedelta → HH:MM:SS
+        elif isinstance(v, timedelta):
+            total_seconds = int(v.total_seconds())
+            horas = total_seconds // 3600
+            minutos = (total_seconds % 3600) // 60
+            segundos = total_seconds % 60
+
+            result[k] = f"{horas:02}:{minutos:02}:{segundos:02}"
+
+        elif isinstance(v, Decimal):
+            result[k] = float(v)
+
+    return result
 
 #Todos los turnos
 @turno_bp.route('/all', methods=['GET'])
@@ -13,8 +40,9 @@ def turnos():
     cursor = conection.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM turno")
-        resultados = cursor.fetchall()  # Obtiene TODAS las filas del resultado
-        return jsonify(resultados)
+        filas = cursor.fetchall()
+        turnos_serializados = [serialize_turno(fila) for fila in filas]
+        return jsonify(turnos_serializados), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -34,7 +62,8 @@ def turnoEspecifico(id):
         cursor.execute("SELECT * FROM turno WHERE id_turno = %s", (id,) )
         turno = cursor.fetchone()
         if turno:
-            return jsonify(turno)
+            turno_serializado = serialize_turno(turno)
+            return jsonify(turno_serializado), 200
         else:
             return jsonify({'mensaje': 'Turno no encontrado'}), 404
 
@@ -72,11 +101,19 @@ def crear_turno():
     except ValueError as ve:
         if conn: conn.rollback()
         return jsonify({"error": str(ve)}), 400
+
     except Exception:
         if conn: conn.rollback()
         return jsonify({"error": "Error interno"}), 500
+
     finally:
-        try:
-            if cur: cur.close()
-        finally:
-            if conn: conn.close()
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
