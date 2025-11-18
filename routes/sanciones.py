@@ -13,7 +13,18 @@ def sanciones():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM sancion_participante")
+        cursor.execute("""
+            SELECT 
+                s.id_sancion,
+                s.ci_participante,
+                CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+                s.motivo,
+                s.fecha_inicio,
+                s.fecha_fin
+            FROM sancion_participante s
+            JOIN usuario u ON u.ci = s.ci_participante
+            ORDER BY s.fecha_inicio DESC;
+        """)
         resultados = cursor.fetchall()  # Obtiene TODAS las filas del resultado
         return jsonify(resultados)
 
@@ -33,7 +44,18 @@ def sancionEspecifica(id):
     cursor = conection.cursor(dictionary=True)
 
     try:
-        cursor.execute("SELECT * FROM sancion_participante WHERE id_sancion = %s", (id,) )
+        cursor.execute("""
+            SELECT 
+                s.id_sancion,
+                s.ci_participante,
+                CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+                s.motivo,
+                s.fecha_inicio,
+                s.fecha_fin
+            FROM sancion_participante s
+            JOIN usuario u ON u.ci = s.ci_participante
+            ORDER BY s.fecha_inicio DESC;
+         WHERE id_sancion = %s""", (id,) )
         sancion = cursor.fetchone()  
         if sancion:
             return jsonify(sancion)

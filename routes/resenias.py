@@ -49,7 +49,23 @@ def resenias():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM resena")
+        cursor.execute("""
+        SELECT
+            r.id_resena,
+            r.id_reserva,
+            r.ci_participante,
+            CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+            r.fecha_publicacion,
+            r.puntaje_general,
+            r.descripcion,
+            s.nombre_sala,
+            s.edificio
+        FROM resena r
+        JOIN usuario u ON u.ci = r.ci_participante
+        JOIN reserva res ON res.id_reserva = r.id_reserva
+        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala AND s.edificio = res.edificio
+        ORDER BY r.fecha_publicacion DESC;
+        """)
         resultados = cursor.fetchall()  # Obtiene TODAS las filas del resultado
         return jsonify(resultados)
 
@@ -69,7 +85,23 @@ def reseniasEspecifica(id):
     cursor = conection.cursor(dictionary=True)
 
     try:
-        cursor.execute("SELECT * FROM resena WHERE id_resena = %s", (id,) )
+        cursor.execute("""
+        SELECT
+            r.id_resena,
+            r.id_reserva,
+            r.ci_participante,
+            CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+            r.fecha_publicacion,
+            r.puntaje_general,
+            r.descripcion,
+            s.nombre_sala,
+            s.edificio
+        FROM resena r
+        JOIN usuario u ON u.ci = r.ci_participante
+        JOIN reserva res ON res.id_reserva = r.id_reserva
+        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala AND s.edificio = res.edificio
+        WHERE r.id_resena = %s
+        """ , (id,))        
         resenia = cursor.fetchone()
         if resenia:
             return jsonify(resenia)
