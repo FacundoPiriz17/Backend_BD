@@ -130,7 +130,7 @@ def aniadirReserva():
                        INSERT INTO reservaParticipante
                        (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia, confirmacion)
                        VALUES (%s, %s, %s, %s, %s)
-                       """, (ci, id_reserva, _date.today().strftime("%Y-%m-%d"), 'Asiste', True))
+                       """, (ci, id_reserva, _date.today().strftime("%Y-%m-%d"), 'Asiste', 'Confirmado'))
         conection.commit()
 
         ensure_capacidad_no_superada(conection, id_reserva)
@@ -186,17 +186,26 @@ def invitarParticipante():
 
         ok, msg = validar_sanciones_activas(ci_invitado)
         if not ok:
-            return jsonify({'error': msg}), 400
+            return jsonify({'error': 'El usuario tiene sanciones activas y no puede ser invitado a la reserva'}), 400
 
         ensure_reglas_usuario(conection, ci_invitado, id_reserva)
 
+        cur = conection.cursor(dictionary=True)
+        cur.execute("""
+                    SELECT 1
+                    FROM reservaParticipante
+                    WHERE ci_participante = %s
+                      AND id_reserva = %s LIMIT 1
+                    """, (ci_invitado, id_reserva))
+        if cur.fetchone():
+            return jsonify({'error': 'El usuario ya está invitado o registrado en esta reserva'}), 400
+
         cur = conection.cursor()
         cur.execute("""
-                    INSERT INTO reservaParticipante (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia,
-                                                     confirmacion)
+                    INSERT INTO reservaParticipante
+                    (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia, confirmacion)
                     VALUES (%s, %s, %s, %s, %s)
-                    """, (ci_invitado, id_reserva, fecha_solicitud, asistencia, False))
-        conection.commit()
+                    """, (ci_invitado, id_reserva, fecha_solicitud, asistencia, 'Pendiente'))
 
         ensure_capacidad_no_superada(conection, id_reserva)
 
@@ -211,6 +220,7 @@ def invitarParticipante():
     finally:
         cursor.close()
         conection.close()
+
 #Modificar una reserva 
 @reservas_bp.route('/modificar/<int:id>', methods=['PUT'])
 @verificar_token
@@ -311,11 +321,11 @@ def cancelarReserva(id):
 def confirmarInvitado(id):
     usuario = getattr(request, 'usuario_actual', {})
     ci = usuario.get('ci')
-    data = request.get_json()
-    confirmacion = data.get("confirmacion")
+    data = request.get_json() or {}
+    raw_conf = (data.get("confirmacion") or "").strip().capitalize()
 
-    if confirmacion is None:
-        return jsonify({"error": "Parámetro 'confirmar' (true/false) requerido"}), 400
+    if raw_conf not in ("Confirmado", "Rechazado"):
+        return jsonify({"error": "Parámetro 'confirmacion' debe ser 'Confirmado' o 'Rechazado'"}), 400
 
     con = get_connection()
     cur = con.cursor(dictionary=True)
@@ -325,37 +335,47 @@ def confirmarInvitado(id):
         row = cur.fetchone()
         if not row:
             return jsonify({"error": "Reserva no encontrada"}), 404
+
         if int(row['ci_organizador']) == int(ci):
             return jsonify({"error": "El organizador no usa confirmación de invitado"}), 400
-        cur2 = con.cursor()
-        if confirmacion:
-            cur2.execute("""
-                         UPDATE reservaParticipante
-                         SET confirmacion = 1,
-                             asistencia   = 'Asiste'
-                         WHERE id_reserva = %s
-                           AND ci_participante = %s
-                         """, (id, ci))
-        else:
-            cur2.execute("""
-                     UPDATE reservaParticipante
-                     SET confirmacion = 0,
-                         asistencia   = 'No asiste'
-                     WHERE id_reserva = %s
-                       AND ci_participante = %s
-                     """, (id, ci))
-        con.commit()
 
-        if cur2.rowcount == 0:
+        cur.execute("""
+                    SELECT confirmacion, asistencia
+                    FROM reservaParticipante
+                    WHERE id_reserva = %s
+                      AND ci_participante = %s
+                    """, (id, ci))
+        inv = cur.fetchone()
+        if not inv:
             return jsonify({"error": "Invitación no encontrada"}), 404
 
+        if inv['confirmacion'] == raw_conf:
+            return jsonify({
+                "mensaje": "Invitación ya estaba procesada",
+                "confirmacion": raw_conf,
+                "asistencia": inv['asistencia'],
+            }), 200
+
+        desired_asistencia = 'Asiste' if raw_conf == 'Confirmado' else 'No asiste'
+
+        cur2 = con.cursor()
+        cur2.execute("""
+                     UPDATE reservaParticipante
+                     SET confirmacion = %s,
+                         asistencia   = %s
+                     WHERE id_reserva = %s
+                       AND ci_participante = %s
+                     """, (raw_conf, desired_asistencia, id, ci))
+        con.commit()
+
         return jsonify({
-            "mensaje": "Invitación aceptada" if confirmacion else "Invitación rechazada",
-            "confirmacion": bool(confirmacion),
-            "asistencia": "Asiste" if confirmacion else "No asiste"
+            "mensaje": "Invitación aceptada" if raw_conf == 'Confirmado' else "Invitación rechazada",
+            "confirmacion": raw_conf,
+            "asistencia": desired_asistencia
         }), 200
+
     finally:
-        cur.close();
+        cur.close()
         con.close()
 
 #Sala reseñada
@@ -378,7 +398,6 @@ def actualizarResenia(id):
     finally:
         cursor.close()
         conection.close()
-
 
 @reservas_bp.route('/cedula', methods=['GET'])
 @verificar_token
@@ -413,13 +432,26 @@ def reservas_por_cedula():
                 r.id_turno,
                 r.estado,
                 r.ci_organizador,
+                uo.nombre  AS nombre_organizador,
+                uo.apellido AS apellido_organizador,
                 t.hora_inicio,
                 t.hora_fin,
                 rp.confirmacion,
                 rp.asistencia,
-                (r.ci_organizador = %s) AS soyOrganizador
+                (r.ci_organizador = %s) AS soyOrganizador,
+                s.capacidad,
+                (
+                    SELECT COUNT(*)
+                    FROM reservaParticipante rp2
+                    WHERE rp2.id_reserva = r.id_reserva
+                ) AS cantidad_participantes
             FROM reserva r
             JOIN turno t ON t.id_turno = r.id_turno
+            JOIN salasDeEstudio s
+              ON s.nombre_sala = r.nombre_sala
+             AND s.edificio    = r.edificio
+            JOIN usuario uo
+              ON uo.ci = r.ci_organizador
             LEFT JOIN reservaParticipante rp
                    ON rp.id_reserva = r.id_reserva
                   AND rp.ci_participante = %s
@@ -435,12 +467,13 @@ def reservas_por_cedula():
         filas = cur.fetchall()
 
         for f in filas:
+            f["fecha"] = str(f["fecha"])
             hi = f.get("hora_inicio")
             hf = f.get("hora_fin")
             if isinstance(hi, timedelta):
-                f["hora_inicio"] = str(hi)
+                f["hora_inicio"] = str(hi)[:5]
             if isinstance(hf, timedelta):
-                f["hora_fin"] = str(hf)
+                f["hora_fin"] = str(hf)[:5]
 
         return jsonify(filas), 200
 
@@ -465,9 +498,11 @@ def reservas_invitaciones():
     try:
         filtro = ""
         if estado == 'pendiente':
-            filtro = "AND rp.confirmacion = 0"
+            filtro = "AND rp.confirmacion = 'Pendiente'"
         elif estado in ('confirmada', 'confirmadas'):
-            filtro = "AND rp.confirmacion = 1"
+            filtro = "AND rp.confirmacion = 'Confirmado'"
+        elif estado in ('rechazada', 'rechazadas'):
+            filtro = "AND rp.confirmacion = 'Rechazado'"
 
         cur.execute(f"""
             SELECT r.id_reserva, r.nombre_sala, r.edificio, r.fecha, r.id_turno,
@@ -491,7 +526,7 @@ def reservas_invitaciones():
                 "edificio": f['edificio'],
                 "fecha": str(f['fecha']),
                 "turno": f"{str(f['hora_inicio'])[:5]}–{str(f['hora_fin'])[:5]}",
-                "confirmacion": bool(f['confirmacion']),
+                "confirmacion": f['confirmacion'],
             })
         return jsonify(items)
     finally:
@@ -536,6 +571,119 @@ def salir_de_reserva(id_reserva):
 
     except Exception as e:
         con.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
+
+@reservas_bp.route('/detalle/<int:id>', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante', 'Administrador', 'Funcionario')
+def reserva_detalle(id):
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT
+                r.id_reserva,
+                r.nombre_sala,
+                r.edificio,
+                r.fecha,
+                r.id_turno,
+                r.estado,
+                r.ci_organizador,
+                uo.nombre AS nombre_organizador,
+                uo.apellido AS apellido_organizador,
+                t.hora_inicio,
+                t.hora_fin,
+                s.capacidad
+            FROM reserva r
+            JOIN turno t ON t.id_turno = r.id_turno
+            JOIN usuario uo ON uo.ci = r.ci_organizador
+            JOIN salasDeEstudio s
+                 ON s.nombre_sala = r.nombre_sala
+                AND s.edificio    = r.edificio
+            WHERE r.id_reserva = %s
+        """, (id,))
+        reserva = cur.fetchone()
+        if not reserva:
+            return jsonify({"error": "Reserva no encontrada"}), 404
+
+        cur2 = con.cursor(dictionary=True)
+        cur2.execute("""
+            SELECT
+                rp.ci_participante,
+                u.nombre,
+                u.apellido,
+                rp.confirmacion,
+                rp.asistencia
+            FROM reservaParticipante rp
+            JOIN usuario u ON u.ci = rp.ci_participante
+            WHERE rp.id_reserva = %s
+            ORDER BY u.apellido, u.nombre
+        """, (id,))
+        participantes = cur2.fetchall()
+        for p in participantes:
+            p["ci"] = p.pop("ci_participante")
+            p["estado_confirmacion"] = p.pop("confirmacion")
+        reserva["participantes"] = participantes
+
+        reserva["hora_inicio"] = str(reserva["hora_inicio"])[:5]
+        reserva["hora_fin"] = str(reserva["hora_fin"])[:5]
+
+        return jsonify(reserva), 200
+
+    except Exception as e:
+        print("ERROR en /reservas/detalle:", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
+
+@reservas_bp.route('/para-resenar', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante')
+def reservas_para_resenar():
+    user = getattr(request, 'usuario_actual', {}) or {}
+    ci = user.get('ci')
+
+    if not ci:
+        return jsonify({"error": "CI no encontrada en el token"}), 400
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT
+                r.id_reserva,
+                r.nombre_sala,
+                r.edificio,
+                r.fecha,
+                r.estado,
+                t.hora_inicio,
+                t.hora_fin,
+                rp.asistencia,
+                rp.resenado
+            FROM reserva r
+            JOIN turno t
+              ON t.id_turno = r.id_turno
+            JOIN reservaParticipante rp
+              ON rp.id_reserva = r.id_reserva
+            WHERE rp.ci_participante = %s
+              AND r.estado = 'Finalizada'
+              AND rp.asistencia = 'Asiste'
+              AND rp.resenado = FALSE
+            ORDER BY r.fecha DESC, r.id_turno DESC
+        """, (ci,))
+
+        filas = cur.fetchall()
+        for f in filas:
+            f["hora_inicio"] = str(f["hora_inicio"])[:5]
+            f["hora_fin"] = str(f["hora_fin"])[:5]
+
+        return jsonify(filas), 200
+    except Exception as e:
+        print("ERROR en /reservas/para-resenar:", e)
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()

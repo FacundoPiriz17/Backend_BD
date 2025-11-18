@@ -1,6 +1,22 @@
 from datetime import datetime, timedelta, time, date
 from db import get_connection
 
+def _to_time(value):
+
+    if isinstance(value, time):
+        return value
+
+    if isinstance(value, timedelta):
+        # sumamos al día mínimo y sacamos solo la hora
+        return (datetime.min + value).time()
+
+    if isinstance(value, str):
+        txt = value.strip()
+        fmt = "%H:%M:%S" if txt.count(":") == 2 else "%H:%M"
+        return datetime.strptime(txt, fmt).time()
+
+    raise ValueError(f"Hora inválida: {value!r}")
+
 def validar_ci(ci):
     ci = str(ci)
     if not ci or not ci.isdigit() or len(ci) != 8:
@@ -65,32 +81,60 @@ def validar_anticipacion_reserva(id_turno, fecha_str):
 
     if not turno:
         return False, "El turno especificado no existe."
-    hora_turno = turno["hora_inicio"]
+    hora_turno_raw = turno["hora_inicio"]
+    hora_turno = _to_time(hora_turno_raw)
+
     fecha_turno = datetime.strptime(fecha_str, "%Y-%m-%d").date()
     fecha_hora_turno = datetime.combine(fecha_turno, hora_turno)
 
     if fecha_hora_turno - datetime.now() < timedelta(hours=1):
         return False, "No se puede reservar con menos de una hora de anticipación."
+
     return True, "Reserva con anticipación válida."
 
 def validar_cancelacion_reserva(id_reserva):
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("""
-        SELECT r.fecha, t.hora_inicio
-        FROM reserva r
-        JOIN turno t ON r.id_turno = t.id_turno
-        WHERE r.id_reserva = %s
-    """, (id_reserva,))
-    reserva = cur.fetchone()
-    cur.close(); conn.close()
 
-    if not reserva:
-        return False, "La reserva especificada no existe."
-    fecha_hora_reserva = datetime.combine(reserva["fecha"], reserva["hora_inicio"])
-    if fecha_hora_reserva - datetime.now() <= timedelta(hours=1):
-        return False, "No se puede cancelar la reserva con menos de una hora de anticipación."
-    return True, "Cancelación válida."
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT r.fecha, t.hora_inicio
+              FROM reserva r
+              JOIN turno t ON t.id_turno = r.id_turno
+             WHERE r.id_reserva = %s
+        """, (id_reserva,))
+        reserva = cur.fetchone()
+        if not reserva:
+            return False, "La reserva no existe"
+
+        fecha = reserva["fecha"]
+        hora_inicio = reserva["hora_inicio"]
+
+        if isinstance(hora_inicio, timedelta):
+            hora_inicio = (datetime.min + hora_inicio).time()
+        elif isinstance(hora_inicio, str):
+            try:
+                hora_inicio = datetime.strptime(hora_inicio, "%H:%M:%S").time()
+            except ValueError:
+                hora_inicio = datetime.strptime(hora_inicio[:5], "%H:%M").time()
+        elif not isinstance(hora_inicio, time):
+            return False, "Formato de hora de la reserva inválido"
+
+        fecha_hora_reserva = datetime.combine(fecha, hora_inicio)
+        ahora = datetime.now()
+
+        if fecha_hora_reserva <= ahora:
+            return False, "Solo se pueden cancelar reservas futuras"
+
+        return True, ""
+
+    except Exception as e:
+        # Si querés loguear el error:
+        print("ERROR en validar_cancelacion_reserva:", e)
+        return False, "Error interno al validar la cancelación"
+    finally:
+        cur.close()
+        con.close()
 
 def ensure_no_solapamiento_de_reserva(conn, nombre_sala, edificio, fecha, id_turno):
     cur = conn.cursor()
@@ -109,7 +153,7 @@ def ensure_no_solapamiento_de_reserva(conn, nombre_sala, edificio, fecha, id_tur
     if exists:
         raise ValueError("Ya existe una reserva para esa sala, fecha y turno.")
 
-def ensure_capacidad_no_superada(conn, id_reserva: int) -> None:
+def ensure_capacidad_no_superada(conn, id_reserva):
     cur = conn.cursor(dictionary=True)
     cur.execute("""
         SELECT s.capacidad,

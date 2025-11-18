@@ -179,3 +179,30 @@ def eliminarSancion(id):
     finally:
         cursor.close()
         conection.close()
+
+@sanciones_bp.route('/mias', methods=['GET'])
+@verificar_token
+@requiere_rol('Participante', 'Funcionario', 'Administrador')
+def mis_sanciones():
+    user = getattr(request, 'usuario_actual', {}) or {}
+    ci = user.get("ci")
+
+    con = get_connection()
+    cur = con.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT id_sancion, motivo, fecha_inicio, fecha_fin,
+                   CURDATE() BETWEEN fecha_inicio AND fecha_fin AS activa
+            FROM sancion_participante
+            WHERE ci_participante = %s
+            ORDER BY fecha_inicio DESC
+        """, (ci,))
+        sanciones = cur.fetchall()
+
+        return jsonify(sanciones), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        con.close()
