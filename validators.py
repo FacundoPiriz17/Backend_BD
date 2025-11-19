@@ -139,15 +139,13 @@ def validar_cancelacion_reserva(id_reserva):
 def ensure_no_solapamiento_de_reserva(conn, nombre_sala, edificio, fecha, id_turno):
     cur = conn.cursor()
     cur.execute("""
-        SELECT 1
-        FROM reserva
-        WHERE nombre_sala = %s
-          AND edificio = %s
-          AND fecha = %s
-          AND id_turno = %s
-          AND estado IN ('Activa', 'Finalizada', 'Sin asistencia', 'Cancelada')
-        LIMIT 1
-    """, (nombre_sala, edificio, fecha, id_turno))
+                SELECT 1
+                FROM reserva
+                WHERE edificio = %s
+                  AND fecha = %s
+                  AND id_turno = %s
+                  AND estado = 'Activa' LIMIT 1
+                """, (edificio, fecha, id_turno))
     exists = cur.fetchone()
     cur.close()
     if exists:
