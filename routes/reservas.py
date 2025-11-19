@@ -22,7 +22,7 @@ reservas_bp = Blueprint('reservas', __name__, url_prefix='/reservas')
 #Todas las reservas
 @reservas_bp.route('/all', methods=['GET'])
 @verificar_token
-@requiere_rol('Participante')
+@requiere_rol('Participante','Administrador')
 def reservas():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
@@ -268,11 +268,19 @@ def eliminarReserva(id):
     conection = get_connection()
     cursor = conection.cursor()
     try:
+        # Primero borrar los participantes asociados
+        cursor.execute("DELETE FROM reservaparticipante WHERE id_reserva = %s", (id,))
+
+        # Luego borrar la reserva
         cursor.execute("DELETE FROM reserva WHERE id_reserva = %s", (id,))
+
         conection.commit()
+
         if cursor.rowcount == 0:
             return jsonify({'mensaje': 'Reserva no encontrada'}), 404
-        return jsonify({'mensaje':'Reserva eliminada correctamente'}), 200
+
+        return jsonify({'mensaje': 'Reserva eliminada correctamente'}), 200
+
     except Exception as e:
         conection.rollback()
         return jsonify({'error': str(e)}), 500
