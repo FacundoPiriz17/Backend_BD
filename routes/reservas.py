@@ -171,6 +171,21 @@ def invitarParticipante():
             return jsonify({'error': 'Solo el organizador puede invitar participantes a esta reserva'}), 403
 
     try:
+        cur_estado = conection.cursor(dictionary=True)
+        cur_estado.execute("""
+                           SELECT estado
+                           FROM reserva
+                           WHERE id_reserva = %s LIMIT 1
+                           """, (id_reserva,))
+        reserva_row = cur_estado.fetchone()
+        cur_estado.close()
+
+        if not reserva_row:
+            return jsonify({'error': 'La reserva no existe'}), 404
+
+        if reserva_row['estado'] != 'Activa':
+            return jsonify({'error': 'Sólo se pueden invitar participantes a reservas activas'}), 400
+
         validate_reserva_participante_fecha(fecha_solicitud)
 
         cursor.execute("SELECT ci FROM usuario WHERE email = %s", (email_invitado,))
@@ -190,24 +205,27 @@ def invitarParticipante():
 
         ensure_reglas_usuario(conection, ci_invitado, id_reserva)
 
-        cur = conection.cursor(dictionary=True)
-        cur.execute("""
-                    SELECT 1
-                    FROM reservaParticipante
-                    WHERE ci_participante = %s
-                      AND id_reserva = %s LIMIT 1
-                    """, (ci_invitado, id_reserva))
-        if cur.fetchone():
+        cur_check = conection.cursor(dictionary=True)
+        cur_check.execute("""
+            SELECT 1
+            FROM reservaParticipante
+            WHERE ci_participante = %s
+              AND id_reserva = %s
+            LIMIT 1
+        """, (ci_invitado, id_reserva))
+        if cur_check.fetchone():
             return jsonify({'error': 'El usuario ya está invitado o registrado en esta reserva'}), 400
 
-        cur = conection.cursor()
-        cur.execute("""
-                    INSERT INTO reservaParticipante
-                    (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia, confirmacion)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """, (ci_invitado, id_reserva, fecha_solicitud, asistencia, 'Pendiente'))
+        cur_insert = conection.cursor()
+        cur_insert.execute("""
+            INSERT INTO reservaParticipante
+            (ci_participante, id_reserva, fecha_solicitud_reserva, asistencia, confirmacion)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (ci_invitado, id_reserva, fecha_solicitud, asistencia, 'Pendiente'))
 
         ensure_capacidad_no_superada(conection, id_reserva)
+
+        conection.commit()
 
         return jsonify({'mensaje': 'Invitado agregado correctamente a la reserva'}), 201
 
@@ -512,6 +530,7 @@ def reservas_invitaciones():
             JOIN turno t ON t.id_turno = r.id_turno
             WHERE rp.ci_participante = %s
               AND r.ci_organizador <> %s
+              AND r.estado = 'Activa'
               {filtro}
             ORDER BY r.fecha DESC, r.id_turno DESC
         """, (ci, ci))
