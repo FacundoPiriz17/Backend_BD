@@ -22,7 +22,7 @@ reservas_bp = Blueprint('reservas', __name__, url_prefix='/reservas')
 #Todas las reservas
 @reservas_bp.route('/all', methods=['GET'])
 @verificar_token
-@requiere_rol('Participante')
+@requiere_rol('Administrador', 'Funcionario')
 def reservas():
     conection = get_connection()
     cursor = conection.cursor(dictionary=True)
