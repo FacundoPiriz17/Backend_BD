@@ -56,6 +56,28 @@ def obtener_sala(nombre_sala, edificio):
         cursor.close()
         connection.close()
 
+
+# Buscar salas por nombre (puede devolver múltiples resultados)
+@salas_bp.route('/buscar/<string:nombre_sala>', methods=['GET'])
+@verificar_token
+def buscar_salas_por_nombre(nombre_sala):
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT * FROM salasDeEstudio
+            WHERE nombre_sala = %s
+        """, (nombre_sala,))
+        salas = cursor.fetchall()
+        if salas:
+            return jsonify(salas)
+        return jsonify({'mensaje': 'No se encontraron salas con ese nombre'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
 @salas_bp.route('/<string:edificio>', methods=['GET'])
 @verificar_token
 def obtener_salas_edificio(edificio):
