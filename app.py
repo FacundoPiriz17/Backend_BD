@@ -8,6 +8,7 @@ from routes.stats import stats_bp
 from routes.turnos import turno_bp
 from routes.reservas import reservas_bp
 from routes.salas import salas_bp
+from routes.programas import programas_bp
 
 app = Flask(__name__)
 CORS(app)
@@ -26,6 +27,8 @@ app.register_blueprint(turno_bp)
 app.register_blueprint(reservas_bp)
 
 app.register_blueprint(salas_bp)
+
+app.register_blueprint(programas_bp)
 
 @app.before_request
 def handle_preflight():

@@ -54,20 +54,24 @@ def resenias():
             r.id_resena,
             r.id_reserva,
             r.ci_participante,
-            CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+            CASE
+                WHEN u.ci IS NULL THEN NULL
+                ELSE CONCAT(u.nombre, ' ', u.apellido)
+            END AS nombre_completo,
             r.fecha_publicacion,
             r.puntaje_general,
             r.descripcion,
             s.nombre_sala,
             s.edificio
         FROM resena r
-        JOIN usuario u ON u.ci = r.ci_participante
+        LEFT JOIN usuario u ON u.ci = r.ci_participante
         JOIN reserva res ON res.id_reserva = r.id_reserva
-        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala AND s.edificio = res.edificio
+        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala
+                             AND s.edificio = res.edificio
         ORDER BY r.fecha_publicacion DESC;
         """)
-        resultados = cursor.fetchall()  # Obtiene TODAS las filas del resultado
-        return jsonify(resultados)
+        resultados = cursor.fetchall()
+        return jsonify(resultados), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -90,21 +94,25 @@ def reseniasEspecifica(id):
             r.id_resena,
             r.id_reserva,
             r.ci_participante,
-            CONCAT(u.nombre, ' ', u.apellido) AS nombre_completo,
+            CASE
+                WHEN u.ci IS NULL THEN NULL
+                ELSE CONCAT(u.nombre, ' ', u.apellido)
+            END AS nombre_completo,
             r.fecha_publicacion,
             r.puntaje_general,
             r.descripcion,
             s.nombre_sala,
             s.edificio
         FROM resena r
-        JOIN usuario u ON u.ci = r.ci_participante
+        LEFT JOIN usuario u ON u.ci = r.ci_participante
         JOIN reserva res ON res.id_reserva = r.id_reserva
-        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala AND s.edificio = res.edificio
+        JOIN salasDeEstudio s ON s.nombre_sala = res.nombre_sala
+                             AND s.edificio = res.edificio
         WHERE r.id_resena = %s
-        """ , (id,))        
+        """, (id,))
         resenia = cursor.fetchone()
         if resenia:
-            return jsonify(resenia)
+            return jsonify(resenia), 200
         else:
             return jsonify({'mensaje': 'Reseña no encontrada'}), 404
 
@@ -114,6 +122,7 @@ def reseniasEspecifica(id):
     finally:
         cursor.close()
         conection.close()
+
 
 #Añadir una reseña
 @resenias_bp.route('/registrar', methods=['POST'])
@@ -251,6 +260,7 @@ def modificarResenia(id):
     finally:
         cursor.close()
         conection.close()
+
 #eliminar una reseña
 @resenias_bp.route('/eliminar/<int:id>', methods=['DELETE'])
 @verificar_token

@@ -23,10 +23,26 @@ def registrar_usuario():
     contrasena = data.get('contrasena')
 
     programa = data.get('programa') or {}
-    nombre_plan = (programa.get('nombre_plan') or '').strip()
-    rol_academico = (programa.get('rol') or '').strip()
+    programas_input = data.get('programas') or []
 
-    if not all([ci, nombre, apellido, email, rol, contrasena]) or not all(str(x).strip() for x in [ci, nombre, apellido, email, rol, contrasena]):
+    lista_programas = []
+
+    if isinstance(programas_input, list) and programas_input:
+        for p in programas_input:
+            if not isinstance(p, dict):
+                continue
+            np = (p.get('nombre_plan') or '').strip()
+            ra = (p.get('rol') or '').strip()
+            if np and ra:
+                lista_programas.append({'nombre_plan': np, 'rol': ra})
+    else:
+        np = (programa.get('nombre_plan') or '').strip()
+        ra = (programa.get('rol') or '').strip()
+        if np and ra:
+            lista_programas.append({'nombre_plan': np, 'rol': ra})
+
+    if not all([ci, nombre, apellido, email, rol, contrasena]) or \
+            not all(str(x).strip() for x in [ci, nombre, apellido, email, rol, contrasena]):
         return jsonify({'error': 'Datos insuficientes'}), 400
 
     if not validar_ci(ci):
@@ -39,11 +55,18 @@ def registrar_usuario():
         return jsonify({'error': "Rol inválido. Use 'Participante', 'Funcionario' o 'Administrador'"}), 400
 
     requiere_programa = (rol == 'Participante')
+
     if requiere_programa:
-        if not all([nombre_plan, rol_academico]):
-            return jsonify({'error': 'Faltan datos de programa académico: nombre_plan y rol'}), 400
-        if rol_academico not in ('Alumno', 'Docente'):
-            return jsonify({'error': "Rol académico inválido. Use 'Alumno' o 'Docente'"}), 400
+        if not lista_programas:
+            return jsonify({
+                'error': 'Faltan datos de programa académico: se requiere al menos un plan con rol académico'
+            }), 400
+
+        for p in lista_programas:
+            if p['rol'] not in ('Alumno', 'Docente'):
+                return jsonify({
+                    'error': "Rol académico inválido. Use 'Alumno' o 'Docente' en todos los programas"
+                }), 400
 
     con = get_connection()
     cur = con.cursor(dictionary=True)
@@ -55,35 +78,48 @@ def registrar_usuario():
         cur2 = con.cursor()
         cur2.execute(
             "INSERT INTO usuario (ci, nombre, apellido, email, rol) VALUES (%s, %s, %s, %s, %s)",
-            (ci, nombre, apellido, email, rol)
+            (ci, nombre.strip(), apellido.strip(), email.strip(), rol)
         )
 
         contrasena_hasheada = hasheo(contrasena)
         cur2.execute(
             "INSERT INTO login (email, contrasena) VALUES (%s, %s)",
-            (email, contrasena_hasheada)
+            (email.strip(), contrasena_hasheada)
         )
 
         if requiere_programa:
-            cur2.execute("SELECT 1 FROM planAcademico WHERE nombre_plan = %s LIMIT 1", (nombre_plan,))
-            if cur2.fetchone() is None:
-                con.rollback()
-                return jsonify({'error': 'El plan académico indicado no existe'}), 400
+            for p in lista_programas:
+                nombre_plan = p['nombre_plan']
+                rol_academico = p['rol']
 
-            cur2.execute("""
-                         SELECT 1
-                         FROM participanteProgramaAcademico
-                         WHERE ci_participante = %s
-                           AND nombre_plan = %s LIMIT 1
-                         """, (ci, nombre_plan))
-            if cur2.fetchone():
-                con.rollback()
-                return jsonify({'error': 'El participante ya está asociado a ese plan académico'}), 400
+                cur2.execute(
+                    "SELECT 1 FROM planAcademico WHERE nombre_plan = %s LIMIT 1",
+                    (nombre_plan,)
+                )
+                if cur2.fetchone() is None:
+                    con.rollback()
+                    return jsonify({
+                        'error': f'El plan académico indicado no existe: {nombre_plan}'
+                    }), 400
 
-            cur2.execute("""
-                         INSERT INTO participanteProgramaAcademico (ci_participante, nombre_plan, rol)
-                         VALUES (%s, %s, %s)
-                         """, (ci, nombre_plan, rol_academico))
+                cur2.execute("""
+                    SELECT 1
+                    FROM participanteProgramaAcademico
+                    WHERE ci_participante = %s
+                      AND nombre_plan = %s
+                    LIMIT 1
+                """, (ci, nombre_plan))
+                if cur2.fetchone():
+                    con.rollback()
+                    return jsonify({
+                        'error': f'El participante ya está asociado al plan académico: {nombre_plan}'
+                    }), 400
+
+            for p in lista_programas:
+                cur2.execute("""
+                    INSERT INTO participanteProgramaAcademico (ci_participante, nombre_plan, rol)
+                    VALUES (%s, %s, %s)
+                """, (ci, p['nombre_plan'], p['rol']))
 
         con.commit()
         return jsonify({'respuesta': 'Usuario creado correctamente'}), 201
@@ -92,8 +128,9 @@ def registrar_usuario():
         con.rollback()
         return jsonify({'error': str(e)}), 400
     finally:
-        cur.close();
+        cur.close()
         con.close()
+
 
 @login_bp.route('/usuarios', methods=['GET'])
 @verificar_token
@@ -149,30 +186,35 @@ def actualizar_usuario(ci):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-
         cursor.execute("SELECT email FROM usuario WHERE ci = %s", (ci,))
         row = cursor.fetchone()
         if not row:
             return jsonify({'error': 'Usuario no encontrado'}), 404
-        email_anterior = row['email']
 
         cursor = conn.cursor()
-        cursor.execute("UPDATE usuario SET nombre = %s, apellido = %s, email = %s, rol = %s WHERE ci = %s",
-                       (nombre, apellido, email, rol, ci))
+        cursor.execute("""
+                       UPDATE usuario
+                       SET nombre   = %s,
+                           apellido = %s,
+                           email    = %s,
+                           rol      = %s
+                       WHERE ci = %s
+                       """, (nombre, apellido, email, rol, ci))
 
         if cursor.rowcount == 0:
             return jsonify({'error': 'Usuario no encontrado'}), 404
 
         if contrasena:
             contrasena_hasheada = hasheo(contrasena)
-            cursor.execute("UPDATE login SET contrasena = %s WHERE email = %s",
-                           (contrasena_hasheada, email_anterior))
-        if email != email_anterior:
-            cursor.execute("UPDATE login SET email = %s WHERE email = %s",
-                           (email, email_anterior))
+            cursor.execute("""
+                           UPDATE login
+                           SET contrasena = %s
+                           WHERE email = %s
+                           """, (contrasena_hasheada, email))
 
         conn.commit()
         return jsonify({'mensaje': 'Usuario actualizado correctamente'}), 200
+
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 400
@@ -187,22 +229,12 @@ def eliminar_usuario(ci):
     con = get_connection()
     cur = con.cursor(dictionary=True)
     try:
-        cur.execute("SELECT email FROM usuario WHERE ci = %s", (ci,))
-        row = cur.fetchone()
-        if not row:
+        cur.execute("SELECT 1 FROM usuario WHERE ci = %s", (ci,))
+        if not cur.fetchone():
             return jsonify({'error': 'Usuario no encontrado'}), 404
-        email = row['email']
 
-        cur2 = con.cursor()
-        cur2.execute("DELETE FROM participanteProgramaAcademico WHERE ci_participante = %s", (ci,))
-
-
-        cur2.execute("DELETE FROM reservaParticipante WHERE ci_participante = %s", (ci,))
-
-        cur2.execute("DELETE FROM login WHERE email = %s", (email,))
-
-        cur2.execute("DELETE FROM usuario WHERE ci = %s", (ci,))
-        if cur2.rowcount == 0:
+        cur.execute("DELETE FROM usuario WHERE ci = %s", (ci,))
+        if cur.rowcount == 0:
             con.rollback()
             return jsonify({'error': 'Usuario no encontrado'}), 404
 
@@ -216,8 +248,9 @@ def eliminar_usuario(ci):
             return jsonify({'error': 'No se puede eliminar: existen registros asociados'}), 400
         return jsonify({'error': err}), 400
     finally:
-        cur.close();
+        cur.close()
         con.close()
+
 
 @login_bp.route('/inicio', methods=['POST'])
 def login_usuario():
