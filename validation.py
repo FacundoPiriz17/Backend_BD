@@ -1,43 +1,52 @@
-import jwt
-from flask import request, jsonify
+# validation.py
 from functools import wraps
-
-SECRET_KEY = "clave_secreta" #Variable asignada en .env en la dockerización
+from flask import request, jsonify
+import jwt
+from config import SECRET_KEY
 
 def verificar_token(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
         token = None
-        if 'Authorization' in request.headers:
-            partes = request.headers['Authorization'].split(" ")
-            if len(partes) == 2:
-                token = partes[1]
+
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
 
         if not token:
-            return jsonify({'error': 'Token no proporcionado'}), 401
+            return jsonify({"error": "Token faltante o formato inválido"}), 401
 
         try:
-            datos = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            request.usuario_actual = datos
+            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'El token ha expirado'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'error': 'Token inválido'}), 401
+            return jsonify({"error": "Token expirado"}), 401
+        except Exception:
+            return jsonify({"error": "Token inválido"}), 401
+
+        request.usuario_actual = {
+            "ci": data.get("ci"),
+            "email": data.get("email"),
+            "rol": data.get("rol"),
+        }
 
         return func(*args, **kwargs)
+
     return wrapper
+
 
 def requiere_rol(*roles_permitidos):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            usuario = getattr(request, 'usuario_actual', None)
-            if not usuario:
-                return jsonify({'error': 'Token no proporcionado o inválido'}), 401
+            user = getattr(request, "usuario_actual", None)
+            if not user:
+                return jsonify({"error": "Usuario no autenticado"}), 401
 
-            if usuario.get("rol") not in roles_permitidos:
-                return jsonify({'error': f'Acceso denegado para el rol {usuario.get("rol")}'}), 403
+            rol = user.get("rol")
+            if rol not in roles_permitidos:
+                return jsonify({"error": "No autorizado"}), 403
 
             return func(*args, **kwargs)
+
         return wrapper
     return decorator

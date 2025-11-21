@@ -5,10 +5,9 @@ from db import get_connection
 from hash_function import hasheo, verificar_contrasena
 from validation import requiere_rol, verificar_token
 from validators import validar_ci, validar_email_ucu
+from config import SECRET_KEY
 
 login_bp = Blueprint('login', __name__, url_prefix='/login')
-
-SECRET_KEY = "clave_secreta" #Variable asignada en .env en la dockerización
 
 @login_bp.route('/registro', methods=['POST'])
 @verificar_token
@@ -229,24 +228,25 @@ def eliminar_usuario(ci):
     con = get_connection()
     cur = con.cursor(dictionary=True)
     try:
-        cur.execute("SELECT 1 FROM usuario WHERE ci = %s", (ci,))
-        if not cur.fetchone():
+        cur.execute("SELECT email, activo FROM usuario WHERE ci = %s", (ci,))
+        row = cur.fetchone()
+        if not row:
             return jsonify({'error': 'Usuario no encontrado'}), 404
 
-        cur.execute("DELETE FROM usuario WHERE ci = %s", (ci,))
+        if not row["activo"]:
+            return jsonify({'mensaje': 'El usuario ya estaba inactivo'}), 200
+
+        cur.execute("UPDATE usuario SET activo = FALSE WHERE ci = %s", (ci,))
         if cur.rowcount == 0:
             con.rollback()
             return jsonify({'error': 'Usuario no encontrado'}), 404
 
         con.commit()
-        return jsonify({'mensaje': 'Usuario eliminado correctamente'}), 200
+        return jsonify({'mensaje': 'Usuario desactivado correctamente'}), 200
 
     except Exception as e:
         con.rollback()
-        err = str(e)
-        if 'foreign key constraint' in err.lower():
-            return jsonify({'error': 'No se puede eliminar: existen registros asociados'}), 400
-        return jsonify({'error': err}), 400
+        return jsonify({'error': str(e)}), 500
     finally:
         cur.close()
         con.close()
@@ -265,12 +265,15 @@ def login_usuario():
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT u.ci, u.nombre, u.apellido, u.email, u.rol, l.contrasena 
-            FROM usuario u
-            JOIN login l ON u.email = l.email
-            WHERE u.email = %s
-        """, (email,))
+                    SELECT u.ci, u.nombre, u.apellido, u.email, u.rol, u.activo, l.contrasena
+                    FROM usuario u
+                             JOIN login l ON u.email = l.email
+                    WHERE u.email = %s
+                    """, (email,))
         usuario = cursor.fetchone()
+
+        if not usuario or not usuario["activo"]:
+            return jsonify({'error': 'Credenciales inválidas'}), 401
 
         if usuario and verificar_contrasena(contrasena, usuario['contrasena']):
             token = jwt.encode(
