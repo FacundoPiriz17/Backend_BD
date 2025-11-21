@@ -16,3 +16,6 @@ La funcion del token ya fue implementada, debemeos testearla todavia.
 28/10: Terminado el login en Frontend y varios endpoints de la API, relacionados principalmente con las reseñas y las sanciones.
 
 29/10: Varios endpoints más de la API y terminamos la dockerización de la API. 
+
+De 1/11-21/11: Arreglo de bugs y algún endpoint extra en varias rutas que no permitiían que la API funcionara correctamente 
+
