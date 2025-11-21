@@ -6,8 +6,15 @@ from config import (
     DB_FUNC_USER, DB_FUNC_PASSWORD,
     DB_PART_USER, DB_PART_PASSWORD,
 )
+from flask import has_request_context, request
 
 def get_connection(rol=None):
+
+    # Si no se proporciona rol, intentar obtenerlo del request actual
+    if rol is None and has_request_context():
+        user = getattr(request, 'usuario_actual', {}) or {}
+        rol = user.get('rol')
+
     if rol == "Administrador":
         user, pwd = DB_ADMIN_USER, DB_ADMIN_PASSWORD
     elif rol == "Funcionario":
