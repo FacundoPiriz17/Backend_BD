@@ -24,7 +24,10 @@ reservas_bp = Blueprint('reservas', __name__, url_prefix='/reservas')
 @verificar_token
 @requiere_rol('Administrador', 'Funcionario')
 def reservas():
-    conection = get_connection()
+    user = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = user.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM reserva")
@@ -42,7 +45,10 @@ def reservas():
 @verificar_token
 @requiere_rol('Participante')
 def reservaEspecifica(id):
-    conection = get_connection()
+    user = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = user.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM reserva WHERE id_reserva = %s", (id,))
@@ -62,7 +68,10 @@ def reservaEspecifica(id):
 @verificar_token
 @requiere_rol('Participante')
 def aniadirReserva():
-    conection = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor()
     data = request.get_json()
 
@@ -150,7 +159,10 @@ def aniadirReserva():
 @verificar_token
 @requiere_rol('Participante')
 def invitarParticipante():
-    conection = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor(dictionary=True)
     data = request.get_json()
 
@@ -244,7 +256,10 @@ def invitarParticipante():
 @verificar_token
 @requiere_rol('Funcionario','Administrador')
 def modificarReserva(id):
-    conection = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor()
     data = request.get_json()
     nombre_sala = data.get("nombre_sala")
@@ -283,7 +298,10 @@ def modificarReserva(id):
 @verificar_token
 @requiere_rol('Funcionario', 'Administrador')
 def eliminarReserva(id):
-    conection = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor()
     try:
         cursor.execute("DELETE FROM reserva WHERE id_reserva = %s", (id,))
@@ -302,7 +320,10 @@ def eliminarReserva(id):
 @verificar_token
 @requiere_rol('Participante','Administrador','Funcionario')
 def cancelarReserva(id):
-    conection = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    conection = get_connection(rol_bd)
     cursor = conection.cursor()
     usuario = getattr(request, 'usuario_actual', {})
     ci_token = usuario.get("ci")
@@ -338,6 +359,7 @@ def cancelarReserva(id):
 @requiere_rol('Participante')
 def confirmarInvitado(id):
     usuario = getattr(request, 'usuario_actual', {})
+    rol_bd = usuario.get('rol')
     ci = usuario.get('ci')
     data = request.get_json() or {}
     raw_conf = (data.get("confirmacion") or "").strip().capitalize()
@@ -345,7 +367,7 @@ def confirmarInvitado(id):
     if raw_conf not in ("Confirmado", "Rechazado"):
         return jsonify({"error": "Parámetro 'confirmacion' debe ser 'Confirmado' o 'Rechazado'"}), 400
 
-    con = get_connection()
+    con = get_connection(rol_bd)
     cur = con.cursor(dictionary=True)
 
     try:
@@ -401,9 +423,11 @@ def confirmarInvitado(id):
 @verificar_token
 @requiere_rol('Participante')
 def actualizarResenia(id):
-    conection = get_connection()
-    cursor = conection.cursor()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
 
+    conection = get_connection(rol_bd)
+    cursor = conection.cursor()
     try:
         cursor.execute("UPDATE reservaParticipante SET resenado = NOT resenado WHERE id_reserva = %s", (id))
         conection.commit()
@@ -438,7 +462,7 @@ def reservas_por_cedula():
     if rol == 'Participante' and ci_token is not None and int(ci_token) != ci_int:
         return jsonify({"error": "No autorizado para consultar reservas de otra cédula"}), 403
 
-    con = get_connection()
+    con = get_connection(rol)
     cur = con.cursor(dictionary=True)
     try:
         cur.execute("""
@@ -510,8 +534,9 @@ def reservas_invitaciones():
     estado = (request.args.get('estado') or '').strip().lower()
     user = getattr(request, 'usuario_actual', {})
     ci = user.get('ci')
+    rol_bd = user.get('rol')
 
-    con = get_connection()
+    con = get_connection(rol_bd)
     cur = con.cursor(dictionary=True)
     try:
         filtro = ""
@@ -563,7 +588,7 @@ def salir_de_reserva(id_reserva):
     if rol == 'Participante' and ci_token is None:
         return jsonify({"error": "CI no encontrada en el token"}), 400
 
-    con = get_connection()
+    con = get_connection(rol)
     cur = con.cursor(dictionary=True)
     try:
         cur.execute("SELECT ci_organizador FROM reserva WHERE id_reserva = %s", (id_reserva,))
@@ -599,7 +624,10 @@ def salir_de_reserva(id_reserva):
 @verificar_token
 @requiere_rol('Participante', 'Administrador', 'Funcionario')
 def reserva_detalle(id):
-    con = get_connection()
+    usuario = getattr(request, 'usuario_actual', {}) or {}
+    rol_bd = usuario.get('rol')
+
+    con = get_connection(rol_bd)
     cur = con.cursor(dictionary=True)
     try:
         cur.execute("""
@@ -665,11 +693,12 @@ def reserva_detalle(id):
 def reservas_para_resenar():
     user = getattr(request, 'usuario_actual', {}) or {}
     ci = user.get('ci')
+    rol_bd = user.get('rol')
 
     if not ci:
         return jsonify({"error": "CI no encontrada en el token"}), 400
 
-    con = get_connection()
+    con = get_connection(rol_bd)
     cur = con.cursor(dictionary=True)
     try:
         cur.execute("""
